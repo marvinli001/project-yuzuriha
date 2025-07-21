@@ -191,7 +191,7 @@ export default function Sidebar({
                           key={chat.id}
                           className={`group relative flex items-center p-3 rounded-lg cursor-pointer smooth-transition ${
                             chat.id === currentChatId
-                              ? 'bg-green-100 border border-green-200'
+                              ? 'bg-gray-100 border border-gray-400'
                               : 'hover:bg-gray-100'
                           }`}
                           onClick={() => {
