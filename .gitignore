@@ -1,0 +1,69 @@
+# Python
+# Virtual environment
+.venv/
+venv/
+env/
+*.pyc
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# FastAPI/Uvicorn specific
+.mypy_cache/
+.pytest_cache/
+
+# NumPy specific
+.ipynb_checkpoints/
+.npy
+.npz
+
+# Milvus/Vector DB specific (if any local data/logs)
+# Consider if Milvus stores local data files that shouldn't be committed
+# For Zilliz Cloud Milvus, this is less of a concern as data is remote.
+# If you run a local Milvus instance, add its data/log directories here.
+# For example:
+# milvus_data/
+# milvus_logs/
+
+# Node.js / Next.js
+node_modules/
+.next/
+out/ # Next.js static export output
+.pnpm-store/ # If using pnpm
+
+# macOS specific
+.DS_Store
+
+# VS Code specific
+.vscode/
+# Exclude specific VS Code user settings that are personal to you,
+# but keep shared settings like extensions.json or launch.json if they are project-specific.
+# .vscode/settings.json
+# .vscode/tasks.json
+# .vscode/launch.json
+# .vscode/extensions.json
+
+# Logs
+*.log
+logs/
+
+# IDE specific files
+.idea/ # IntelliJ IDEA
+.vscode-test/ # VS Code extension development
+*.sublime-project
+*.sublime-workspace
+
+# Sensitive files (if any)
+# You should avoid committing any files that contain API keys, passwords, etc.
+# These should be in .env files which are already ignored.
