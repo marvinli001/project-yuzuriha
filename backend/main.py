@@ -1,18 +1,16 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
-import os
-import httpx
-import asyncio
-from datetime import datetime, timezone
 import logging
+from datetime import datetime
 
 from services.openai_service import OpenAIService
 from services.milvus_service import MilvusService
 from services.memory_service import MemoryService
-from models.chat_models import ChatRequest, ChatResponse, Message, HealthResponse
+from services.time_service import TimeService
+from services.emotion_service import EmotionAnalyzer, EventClassifier
+from models.chat_models import ChatRequest, ChatResponse, Message, HealthResponse, MemoryStatsResponse
 
 # 配置日志
 logging.basicConfig(
@@ -24,8 +22,8 @@ logger = logging.getLogger(__name__)
 # 创建 FastAPI 应用
 app = FastAPI(
     title="Project Yuzuriha API",
-    description="AI聊天助手后端服务，具备记忆能力",
-    version="1.0.0",
+    description="AI聊天助手后端服务，具备增强记忆能力、情绪分析和时间感知",
+    version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -43,152 +41,232 @@ app.add_middleware(
 openai_service = None
 milvus_service = None
 memory_service = None
+time_service = None
+emotion_analyzer = None
+event_classifier = None
 
 @app.on_event("startup")
 async def startup_event():
     """应用启动时初始化服务"""
-    global openai_service, milvus_service, memory_service
+    global openai_service, milvus_service, memory_service, time_service, emotion_analyzer, event_classifier
     
     try:
-        logger.info("正在初始化服务...")
+        logger.info("正在初始化增强服务...")
         
-        # 初始化 OpenAI 服务
+        # 初始化核心服务
         openai_service = OpenAIService()
-        logger.info("OpenAI 服务初始化成功")
+        logger.info("✓ OpenAI 服务初始化成功")
         
-        # 初始化 Milvus 服务
         milvus_service = MilvusService()
         await milvus_service.initialize()
-        logger.info("Milvus 服务初始化成功")
+        logger.info("✓ Milvus 服务初始化成功")
         
-        # 初始化记忆服务
         memory_service = MemoryService()
-        logger.info("记忆服务初始化成功")
+        logger.info("✓ 记忆服务初始化成功")
         
-        logger.info("所有服务初始化完成")
+        time_service = TimeService()
+        logger.info("✓ 时间服务初始化成功")
+        
+        emotion_analyzer = EmotionAnalyzer()
+        event_classifier = EventClassifier()
+        logger.info("✓ 情绪分析和事件分类服务初始化成功")
+        
+        logger.info("🚀 所有增强服务初始化完成")
         
     except Exception as e:
-        logger.error(f"服务初始化失败: {e}")
+        logger.error(f"❌ 服务初始化失败: {e}")
         raise
 
-def build_context(message: str, history: List[Message], memories: List[Dict[str, Any]] = None) -> str:
-    """构建对话上下文"""
-    current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    context_parts = [
-        f"当前时间: {current_time}",
-        f"用户: marvinli001",
-        "",
-        "你是 Yuzuriha，一个拥有记忆能力的AI助手。",
-        "你可以记住过往的对话内容，并使用这些记忆来提供更好的回复。",
-        "请用中文回复，保持友好和有帮助的语调。",
-        ""
-    ]
-    
-    # 添加相关记忆
-    if memories:
-        context_parts.append("相关的历史记忆:")
-        for i, memory in enumerate(memories[:3], 1):
-            context_parts.append(f"{i}. {memory.get('text', '')}")
-        context_parts.append("")
-    
-    # 添加最近的对话历史
-    if history:
-        context_parts.append("最近的对话:")
-        for msg in history[-5:]:  # 最近5条消息
-            role = "用户" if msg.role == "user" else "助手"
-            context_parts.append(f"{role}: {msg.content}")
-        context_parts.append("")
-    
-    context_parts.append(f"用户当前消息: {message}")
-    
-    return "\n".join(context_parts)
-
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """处理聊天请求"""
+async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks):
+    """增强的聊天处理"""
     try:
         logger.info(f"收到聊天请求: {request.message[:50]}...")
         
-        # 创建消息嵌入用于检索相关记忆
+        # 1. 创建查询嵌入
         query_embedding = await openai_service.create_embedding(request.message)
         
-        # 从向量数据库搜索相关记忆
-        memories = await milvus_service.search_memories(query_embedding, limit=3)
+        # 2. 分析用户消息
+        user_emotion = emotion_analyzer.analyze_emotion(request.message)
+        user_category, user_confidence = event_classifier.classify_event(request.message)
         
-        # 构建对话上下文
-        context = build_context(request.message, request.history, memories)
+        # 3. 从SuperMemory检索相关记忆
+        supermemory_memories = await memory_service.retrieve_relevant_memories(
+            request.message, limit=3
+        )
         
-        # 生成AI回复
-        response = await openai_service.generate_response(context)
+        # 4. 从Milvus搜索向量相似的记忆
+        milvus_memories = await milvus_service.search_memories(
+            query_embedding, 
+            limit=3,
+            emotion_weight_threshold=0.3 if user_emotion['emotion_weight'] > 0.5 else 0.0
+        )
         
-        # 存储用户消息和AI回复到记忆系统
-        user_msg_embedding = await openai_service.create_embedding(request.message)
-        await milvus_service.store_memory(request.message, user_msg_embedding)
+        # 5. 合并记忆
+        all_memories = supermemory_memories + milvus_memories
         
-        ai_msg_embedding = await openai_service.create_embedding(response)
-        await milvus_service.store_memory(f"AI回复: {response}", ai_msg_embedding)
+        # 6. 转换历史消息格式
+        conversation_history = [
+            {'role': msg.role, 'content': msg.content} 
+            for msg in request.history
+        ]
         
-        # 同时存储到SuperMemory（如果可用）
-        if memory_service.enabled:
-            event_data = {
-                "user_message": request.message,
-                "ai_response": response,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "user_id": "marvinli001"
-            }
-            await memory_service.store_event(event_data)
+        # 7. 生成AI回复
+        response = await openai_service.generate_response(
+            request.message,
+            memories=all_memories,
+            conversation_history=conversation_history
+        )
         
-        logger.info("聊天请求处理成功")
+        # 8. 后台存储记忆
+        background_tasks.add_task(
+            store_conversation_memories,
+            request.message,
+            response,
+            query_embedding,
+            user_emotion,
+            user_category,
+            user_confidence
+        )
+        
+        logger.info("✓ 聊天请求处理成功")
         
         return ChatResponse(
             response=response,
-            memories=[{"text": m.get("text"), "score": m.get("score")} for m in memories]
+            memories=[
+                {
+                    "text": m.get("content", ""),
+                    "score": m.get("relevance_score", 0.0),
+                    "source": "supermemory"
+                } for m in supermemory_memories
+            ] + [
+                {
+                    "text": m.get("text", ""),
+                    "score": m.get("score", 0.0),
+                    "source": "milvus"
+                } for m in milvus_memories
+            ]
         )
         
     except Exception as e:
-        logger.error(f"聊天处理错误: {e}")
+        logger.error(f"❌ 聊天处理错误: {e}")
         raise HTTPException(status_code=500, detail=f"处理聊天请求时发生错误: {str(e)}")
 
-@app.get("/api/memories")
-async def get_memories(limit: int = 10):
-    """获取存储的记忆"""
+async def store_conversation_memories(
+    user_message: str,
+    ai_response: str,
+    query_embedding: List[float],
+    user_emotion: Dict[str, float],
+    user_category: str,
+    user_confidence: float
+):
+    """后台任务：存储对话记忆"""
     try:
-        # 这里可以添加获取记忆的逻辑
-        return {"memories": [], "count": 0}
+        # 1. 存储到SuperMemory
+        await memory_service.store_conversation_memory(user_message, ai_response)
+        
+        # 2. 分析AI回复
+        ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
+        ai_category, ai_confidence = event_classifier.classify_event(ai_response)
+        
+        # 3. 确定交互类型
+        interaction_type = memory_service._determine_interaction_type(user_category, ai_category)
+        
+        # 4. 存储用户消息到Milvus
+        await milvus_service.store_memory(
+            text=f"用户: {user_message}",
+            embedding=query_embedding,
+            emotion_weight=user_emotion['emotion_weight'],
+            event_category=user_category,
+            interaction_type=interaction_type
+        )
+        
+        # 5. 为AI回复创建嵌入并存储
+        ai_embedding = await openai_service.create_embedding(ai_response)
+        await milvus_service.store_memory(
+            text=f"助手: {ai_response}",
+            embedding=ai_embedding,
+            emotion_weight=ai_emotion['emotion_weight'],
+            event_category=ai_category,
+            interaction_type=interaction_type
+        )
+        
+        logger.info("✓ 对话记忆存储完成")
+        
     except Exception as e:
-        logger.error(f"获取记忆错误: {e}")
+        logger.error(f"❌ 存储对话记忆失败: {e}")
+
+@app.get("/api/memories/stats", response_model=MemoryStatsResponse)
+async def get_memory_statistics(user_id: str = "marvinli001"):
+    """获取记忆统计信息"""
+    try:
+        stats = await milvus_service.get_memory_stats(user_id)
+        time_info = time_service.get_time_context()
+        
+        return MemoryStatsResponse(
+            total_memories=stats['total_memories'],
+            category_distribution=stats['category_distribution'],
+            user_id=stats['user_id'],
+            generated_at=time_info['current_time']
+        )
+    except Exception as e:
+        logger.error(f"获取记忆统计错误: {e}")
+        raise HTTPException(status_code=500, detail=f"获取统计信息时发生错误: {str(e)}")
+
+@app.get("/api/memories/category/{category}")
+async def get_memories_by_category(category: str, user_id: str = "marvinli001", limit: int = 10):
+    """根据类别获取记忆"""
+    try:
+        memories = await milvus_service.get_memories_by_category(category, user_id, limit)
+        return {"memories": memories, "count": len(memories), "category": category}
+    except Exception as e:
+        logger.error(f"按类别获取记忆错误: {e}")
         raise HTTPException(status_code=500, detail=f"获取记忆时发生错误: {str(e)}")
 
-@app.delete("/api/memories")
-async def clear_memories():
+@app.delete("/api/memories/clear")
+async def clear_all_memories(user_id: str = "marvinli001"):
     """清空所有记忆"""
     try:
-        success = await milvus_service.clear_memories()
-        if memory_service.enabled:
-            await memory_service.clear_all_memories()
+        # 清空Milvus记忆
+        milvus_success = await milvus_service.clear_memories(user_id)
         
-        return {"success": success, "message": "记忆已清空"}
+        # 清空SuperMemory记忆
+        supermemory_success = await memory_service.clear_all_memories(user_id)
+        
+        return {
+            "success": milvus_success and supermemory_success,
+            "message": "记忆已清空",
+            "milvus_cleared": milvus_success,
+            "supermemory_cleared": supermemory_success
+        }
     except Exception as e:
         logger.error(f"清空记忆错误: {e}")
         raise HTTPException(status_code=500, detail=f"清空记忆时发生错误: {str(e)}")
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """健康检查"""
+async def enhanced_health_check():
+    """增强的健康检查"""
     try:
+        time_info = time_service.get_time_context()
+        model_info = openai_service.get_model_info()
+        
         services_status = {
             "openai": openai_service is not None,
-            "milvus": milvus_service is not None,
-            "supermemory": memory_service is not None and memory_service.enabled
+            "milvus": milvus_service is not None and milvus_service.client is not None,
+            "supermemory": memory_service is not None and memory_service.enabled,
+            "time_service": time_service is not None,
+            "emotion_analyzer": emotion_analyzer is not None,
+            "event_classifier": event_classifier is not None
         }
         
         overall_status = "healthy" if all(services_status.values()) else "unhealthy"
         
         return HealthResponse(
             status=overall_status,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            services=services_status
+            timestamp=time_info['current_time'],
+            services=services_status,
+            model_info=model_info,
+            timezone=time_info['timezone']
         )
     except Exception as e:
         logger.error(f"健康检查错误: {e}")
@@ -197,10 +275,19 @@ async def health_check():
 @app.get("/")
 async def root():
     """根路径"""
+    time_info = time_service.get_time_context()
     return {
-        "message": "Project Yuzuriha API",
-        "version": "1.0.0",
-        "status": "running"
+        "message": "Project Yuzuriha Enhanced API",
+        "version": "2.0.0",
+        "status": "running",
+        "current_time": time_info['current_time'],
+        "features": [
+            "增强记忆系统",
+            "情绪分析",
+            "事件分类",
+            "时间感知",
+            "多源记忆检索"
+        ]
     }
 
 if __name__ == "__main__":
