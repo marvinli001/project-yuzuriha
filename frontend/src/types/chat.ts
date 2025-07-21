@@ -9,7 +9,8 @@ export interface ChatHistory {
   id: string
   title: string
   messages: Message[]
-  timestamp: string
+  createdAt: string
+  updatedAt: string
 }
 
 export interface ChatRequest {
@@ -19,5 +20,21 @@ export interface ChatRequest {
 
 export interface ChatResponse {
   response: string
-  memories?: any[]
+  memories?: MemoryResult[]
+}
+
+export interface MemoryResult {
+  text: string
+  score: number
+  timestamp: number
+}
+
+export interface HealthStatus {
+  status: 'healthy' | 'unhealthy'
+  timestamp: string
+  services: {
+    openai: boolean
+    milvus: boolean
+    supermemory: boolean
+  }
 }

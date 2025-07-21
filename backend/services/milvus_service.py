@@ -1,167 +1,177 @@
 import os
 import logging
+import time
 from typing import List, Dict, Any
-from pymilvus import connections, Collection, FieldSchema, CollectionSchema, DataType, utility
-import numpy as np
-from dotenv import load_dotenv
-from services.openai_service import OpenAIService
-
-load_dotenv()
+from pymilvus import connections, Collection, utility, FieldSchema, CollectionSchema, DataType
 
 logger = logging.getLogger(__name__)
 
 class MilvusService:
     def __init__(self):
+        self.uri = os.getenv('MILVUS_URI')
+        self.token = os.getenv('MILVUS_TOKEN')
+        
+        if not self.uri or not self.token:
+            raise ValueError("MILVUS_URI 和 MILVUS_TOKEN 环境变量是必需的")
+        
         self.collection_name = "yuzuriha_memories"
         self.collection = None
-        self.openai_service = OpenAIService()
-        
-        # Zilliz Cloud connection parameters
-        self.uri = os.getenv("MILVUS_URI")
-        self.token = os.getenv("MILVUS_TOKEN")
         
     async def initialize(self):
-        """Initialize connection to Milvus"""
+        """初始化连接和集合"""
         try:
-            # Connect to Zilliz Cloud
+            # 连接到 Milvus
             connections.connect(
                 alias="default",
                 uri=self.uri,
                 token=self.token
             )
+            logger.info("成功连接到 Milvus")
             
-            # Create collection if it doesn't exist
-            if not utility.has_collection(self.collection_name):
-                await self._create_collection()
-            else:
-                self.collection = Collection(self.collection_name)
-                self.collection.load()
-                
-            logger.info("Milvus service initialized successfully")
+            # 创建或加载集合
+            await self._create_collection()
             
         except Exception as e:
-            logger.error(f"Failed to initialize Milvus: {e}")
+            logger.error(f"Milvus 初始化失败: {e}")
             raise
     
     async def _create_collection(self):
-        """Create the memories collection"""
+        """创建集合（如果不存在）"""
         try:
-            # Define schema
+            if utility.has_collection(self.collection_name):
+                self.collection = Collection(self.collection_name)
+                logger.info(f"加载现有集合: {self.collection_name}")
+                return
+            
+            # 定义集合架构
             fields = [
                 FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
                 FieldSchema(name="text", dtype=DataType.VARCHAR, max_length=65535),
-                FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1536),  # text-embedding-3-small dimension
-                FieldSchema(name="timestamp", dtype=DataType.VARCHAR, max_length=100),
-                FieldSchema(name="type", dtype=DataType.VARCHAR, max_length=50),
-                FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=100)
+                FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=1536),
+                FieldSchema(name="timestamp", dtype=DataType.INT64),
+                FieldSchema(name="user_id", dtype=DataType.VARCHAR, max_length=255)
             ]
             
-            schema = CollectionSchema(fields=fields, description="Yuzuriha memory storage")
+            schema = CollectionSchema(
+                fields, 
+                description="Yuzuriha 记忆存储集合"
+            )
             
-            # Create collection
-            self.collection = Collection(name=self.collection_name, schema=schema)
+            # 创建集合
+            self.collection = Collection(
+                name=self.collection_name,
+                schema=schema
+            )
             
-            # Create index for vector search
+            # 创建索引
             index_params = {
-                "index_type": "IVF_FLAT",
                 "metric_type": "COSINE",
-                "params": {"nlist": 1024}
+                "index_type": "HNSW",
+                "params": {
+                    "M": 16,
+                    "efConstruction": 200
+                }
             }
             
-            self.collection.create_index(field_name="embedding", index_params=index_params)
-            self.collection.load()
+            self.collection.create_index(
+                field_name="embedding",
+                index_params=index_params
+            )
             
-            logger.info(f"Collection '{self.collection_name}' created successfully")
+            logger.info(f"成功创建集合: {self.collection_name}")
             
         except Exception as e:
-            logger.error(f"Failed to create collection: {e}")
+            logger.error(f"创建集合失败: {e}")
             raise
-    
-    async def health_check(self) -> bool:
-        """Check Milvus connection health"""
+
+    async def store_memory(self, text: str, embedding: List[float], user_id: str = "marvinli001") -> bool:
+        """存储记忆到 Milvus"""
         try:
-            return utility.has_collection(self.collection_name)
-        except Exception as e:
-            logger.error(f"Milvus health check failed: {e}")
-            return False
-    
-    async def store_conversation(self, user_message: str, assistant_response: str, timestamp: str):
-        """Store conversation in vector database"""
-        try:
-            # Generate embeddings for both messages
-            user_embedding = await self.openai_service.generate_embeddings(user_message)
-            assistant_embedding = await self.openai_service.generate_embeddings(assistant_response)
+            timestamp = int(time.time() * 1000)
             
-            # Prepare data
             data = [
-                {
-                    "text": f"User: {user_message}",
-                    "embedding": user_embedding,
-                    "timestamp": timestamp,
-                    "type": "user_message",
-                    "user_id": "marvinli001"
-                },
-                {
-                    "text": f"Assistant: {assistant_response}",
-                    "embedding": assistant_embedding,
-                    "timestamp": timestamp,
-                    "type": "assistant_message",
-                    "user_id": "marvinli001"
-                }
+                [text],              # text
+                [embedding],         # embedding  
+                [timestamp],         # timestamp
+                [user_id]           # user_id
             ]
             
-            # Insert data
-            self.collection.insert(data)
+            result = self.collection.insert(data)
             self.collection.flush()
             
-            logger.info("Conversation stored in Milvus successfully")
+            logger.info(f"成功存储记忆，ID: {result.primary_keys}")
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to store conversation in Milvus: {e}")
-    
-    async def search_similar(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Search for similar memories"""
+            logger.error(f"存储记忆失败: {e}")
+            return False
+
+    async def search_memories(self, query_embedding: List[float], limit: int = 3, user_id: str = "marvinli001") -> List[Dict[str, Any]]:
+        """搜索相似记忆"""
         try:
-            # Generate embedding for query
-            query_embedding = await self.openai_service.generate_embeddings(query)
+            # 加载集合到内存
+            self.collection.load()
             
-            # Search parameters
+            # 搜索参数
             search_params = {
                 "metric_type": "COSINE",
-                "params": {"nprobe": 10}
+                "params": {
+                    "ef": 100
+                }
             }
             
-            # Perform search
+            # 执行搜索
             results = self.collection.search(
                 data=[query_embedding],
                 anns_field="embedding",
                 param=search_params,
                 limit=limit,
-                output_fields=["text", "timestamp", "type"]
+                expr=f'user_id == "{user_id}"',
+                output_fields=["text", "timestamp", "user_id"]
             )
             
             memories = []
             for result in results[0]:
-                memories.append({
-                    "text": result.entity.get("text"),
-                    "timestamp": result.entity.get("timestamp"),
-                    "type": result.entity.get("type"),
-                    "score": result.score
-                })
+                # 设置相似度阈值
+                if result.score > 0.75:
+                    memories.append({
+                        "text": result.entity.get("text"),
+                        "score": result.score,
+                        "timestamp": result.entity.get("timestamp"),
+                        "user_id": result.entity.get("user_id")
+                    })
             
+            logger.info(f"找到 {len(memories)} 个相关记忆")
             return memories
             
         except Exception as e:
-            logger.error(f"Failed to search memories: {e}")
+            logger.error(f"搜索记忆失败: {e}")
             return []
-    
-    async def clear_collection(self):
-        """Clear all data from collection"""
+
+    async def clear_memories(self, user_id: str = "marvinli001") -> bool:
+        """清空用户的所有记忆"""
         try:
-            if self.collection:
-                self.collection.drop()
-                await self._create_collection()
-                logger.info("Collection cleared successfully")
+            # 删除指定用户的记忆
+            self.collection.delete(expr=f'user_id == "{user_id}"')
+            self.collection.flush()
+            
+            logger.info(f"成功清空用户 {user_id} 的记忆")
+            return True
+            
         except Exception as e:
-            logger.error(f"Failed to clear collection: {e}")
-            raise
+            logger.error(f"清空记忆失败: {e}")
+            return False
+
+    async def get_memory_count(self, user_id: str = "marvinli001") -> int:
+        """获取记忆数量"""
+        try:
+            self.collection.load()
+            count = self.collection.query(
+                expr=f'user_id == "{user_id}"',
+                output_fields=["count(*)"]
+            )
+            return count[0]["count(*)"] if count else 0
+            
+        except Exception as e:
+            logger.error(f"获取记忆数量失败: {e}")
+            return 0
