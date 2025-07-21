@@ -97,11 +97,31 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
             for memory in memories:
                 # 安全地处理记忆数据
                 try:
+                    # 安全地处理时间戳
+                    timestamp = memory.get('timestamp', 0)
+                    formatted_time = "时间未知"
+                    
+                    if timestamp and isinstance(timestamp, (int, float)) and timestamp > 0:
+                        try:
+                            # 检查时间戳是否为毫秒格式，如果是则转换为秒
+                            if timestamp > 1e10:  # 毫秒时间戳
+                                timestamp = timestamp / 1000
+                            
+                            # 验证时间戳范围是否合理（1970-2100年之间）
+                            if 0 < timestamp < 4102444800:  # 2100年的时间戳
+                                formatted_time = self.time_service.format_timestamp(int(timestamp))
+                            else:
+                                logger.warning(f"时间戳超出合理范围: {timestamp}")
+                                formatted_time = "时间无效"
+                        except Exception as ts_error:
+                            logger.warning(f"格式化时间戳失败: {ts_error}, 原始值: {timestamp}")
+                            formatted_time = "时间格式错误"
+                    
                     processed_memory = {
                         'content': str(memory.get('text', '')),
                         'relevance_score': float(memory.get('score', 0.0)),
-                        'timestamp': int(memory.get('timestamp', 0)),
-                        'formatted_time': self.time_service.format_timestamp(int(memory.get('timestamp', 0))),
+                        'timestamp': int(timestamp) if isinstance(timestamp, (int, float)) and timestamp > 0 else 0,
+                        'formatted_time': formatted_time,
                         'emotion_weight': float(memory.get('emotion_weight', 0.0)),
                         'category': str(memory.get('event_category', 'general')),
                         'interaction_type': str(memory.get('interaction_type', 'general')),
@@ -109,7 +129,7 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
                     }
                     processed_memories.append(processed_memory)
                 except Exception as mem_error:
-                    logger.warning(f"处理单个记忆时出错: {mem_error}")
+                    logger.warning(f"处理单个记忆时出错: {mem_error}, 记忆数据: {memory}")
                     continue
             
             logger.info(f"从 Milvus 检索到 {len(processed_memories)} 个相关记忆")
@@ -198,12 +218,13 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
     def get_client_info(self) -> Dict[str, Any]:
         """获取客户端信息"""
         return {
+            "service_type": "milvus_only",
             "backend": "milvus",
-            "supermemory_removed": True,
-            "services": {
-                "emotion_analyzer": self.emotion_analyzer is not None,
-                "event_classifier": self.event_classifier is not None,
-                "time_service": self.time_service is not None,
-                "milvus_service": self.milvus_service is not None
+            "features": {
+                "conversation_memory": True,
+                "event_memory": True,
+                "semantic_search": True,
+                "emotion_analysis": True,
+                "time_awareness": True
             }
         }
