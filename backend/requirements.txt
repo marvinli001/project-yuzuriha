@@ -27,9 +27,6 @@ aiofiles==23.2.1
 # Time handling
 pytz==2023.3
 
-# SuperMemory - AI Memory API
-supermemory
-
 # Text analysis
 textstat==0.7.3
 vaderSentiment==3.3.2

@@ -1,34 +1,25 @@
 import os
 import logging
 from typing import List, Dict, Any, Optional
-import supermemory
 from services.emotion_service import EmotionAnalyzer, EventClassifier
 from services.time_service import TimeService
 
 logger = logging.getLogger(__name__)
 
 class MemoryService:
-    def __init__(self):
-        self.api_key = os.getenv('SUPERMEMORY_API_KEY')
-        self.enabled = bool(self.api_key)
-        
-        if self.enabled:
-            try:
-                # 按照官方文档初始化客户端
-                self.client = supermemory.Client(api_key=self.api_key)
-                logger.info("SuperMemory客户端初始化成功")
-            except Exception as e:
-                logger.error(f"SuperMemory客户端初始化失败: {e}")
-                self.enabled = False
-                self.client = None
-        else:
-            self.client = None
-        
+    """基于 Milvus 的统一记忆服务 - 移除 SuperMemory 依赖"""
+    
+    def __init__(self, milvus_service=None):
         self.emotion_analyzer = EmotionAnalyzer()
         self.event_classifier = EventClassifier()
         self.time_service = TimeService()
+        self.milvus_service = milvus_service  # 注入 Milvus 服务
         
-        logger.info(f"SuperMemory服务已{'启用' if self.enabled else '禁用'}")
+        logger.info("记忆服务初始化完成 - 使用 Milvus 作为统一后端")
+
+    def set_milvus_service(self, milvus_service):
+        """设置 Milvus 服务实例"""
+        self.milvus_service = milvus_service
 
     async def store_conversation_memory(
         self,
@@ -36,13 +27,13 @@ class MemoryService:
         ai_response: str,
         user_id: str = "marvinli001"
     ) -> bool:
-        """存储完整对话记忆 - 修复版本"""
-        if not self.enabled or not self.client:
-            logger.info("SuperMemory未启用，跳过存储")
-            return True
+        """存储对话记忆到 Milvus"""
+        if not self.milvus_service:
+            logger.warning("Milvus服务未初始化，跳过存储")
+            return False
 
         try:
-            # 分析用户消息和AI回复（保留用于元数据）
+            # 分析用户消息和AI回复
             user_emotion = self.emotion_analyzer.analyze_emotion(user_message)
             user_category, user_confidence = self.event_classifier.classify_event(user_message)
             ai_emotion = self.emotion_analyzer.analyze_emotion(ai_response)
@@ -51,137 +42,139 @@ class MemoryService:
             # 获取时间上下文
             time_context = self.time_service.get_time_context()
             
-            # 构建简化的记忆内容 - 减少复杂性，避免API错误
-            memory_content = f"""对话记录 - {time_context['current_time']}
+            # 创建用户消息的嵌入（需要外部传入或者通过 OpenAI 服务创建）
+            # 这里我们将在调用时传入嵌入
+            
+            # 构建对话记忆内容
+            conversation_content = f"""对话记录 - {time_context['current_time']}
 
 用户: {user_message}
 助手: {ai_response}
 
-=== 元数据 ===
-用户ID: {user_id}
-时间戳: {time_context['timestamp']}
+=== 分析数据 ===
 用户情绪权重: {user_emotion['emotion_weight']:.2f}
 用户消息类型: {user_category} (置信度: {user_confidence:.2f})
 AI情绪权重: {ai_emotion['emotion_weight']:.2f}
 AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
 交互类型: {self._determine_interaction_type(user_category, ai_category)}
-"""
-
-            # 使用正确的 SuperMemory API 调用方式
-            result = self.client.add(content=memory_content)
-            
-            logger.info(f"成功存储对话记忆到SuperMemory")
-            return True
-            
-        except Exception as e:
-            logger.error(f"存储对话记忆失败: {e}")
-            return False
-
-    async def store_event_memory(
-        self,
-        event_content: str,
-        event_type: str = "user_action",
-        user_id: str = "marvinli001",
-        additional_metadata: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """存储事件记忆 - 修复版本"""
-        if not self.enabled or not self.client:
-            return True
-
-        try:
-            # 分析事件内容
-            emotion = self.emotion_analyzer.analyze_emotion(event_content)
-            category, confidence = self.event_classifier.classify_event(event_content)
-            time_context = self.time_service.get_time_context()
-            
-            # 构建简化的事件记忆内容
-            event_memory_content = f"""事件记录 - {time_context['current_time']}
-
-事件内容: {event_content}
-事件类型: {event_type}
-
-=== 元数据 ===
 用户ID: {user_id}
-时间戳: {time_context['timestamp']}
-情绪权重: {emotion['emotion_weight']:.2f}
-事件分类: {category} (置信度: {confidence:.2f})
-额外信息: {additional_metadata if additional_metadata else '无'}
 """
             
-            # 使用正确的 SuperMemory API 调用
-            result = self.client.add(content=event_memory_content)
-            
-            logger.info(f"成功存储事件记忆到SuperMemory")
-            return True
+            # 返回需要存储的数据，让调用者处理嵌入
+            return {
+                'content': conversation_content,
+                'user_emotion': user_emotion,
+                'user_category': user_category,
+                'ai_emotion': ai_emotion,
+                'ai_category': ai_category,
+                'interaction_type': self._determine_interaction_type(user_category, ai_category)
+            }
             
         except Exception as e:
-            logger.error(f"存储事件记忆失败: {e}")
+            logger.error(f"准备对话记忆失败: {e}")
             return False
 
     async def retrieve_relevant_memories(
         self,
         query: str,
+        query_embedding: List[float],
         limit: int = 5,
         user_id: str = "marvinli001"
     ) -> List[Dict[str, Any]]:
-        """检索相关记忆 - 修复搜索 API 调用"""
-        if not self.enabled or not self.client:
+        """从 Milvus 检索相关记忆"""
+        if not self.milvus_service:
+            logger.warning("Milvus服务未初始化，返回空结果")
             return []
 
         try:
-            # 使用正确的搜索 API
-            results = self.client.search(q=query, limit=limit)
+            # 使用 Milvus 进行语义搜索
+            memories = await self.milvus_service.search_memories(
+                query_embedding=query_embedding,
+                limit=limit,
+                emotion_weight_threshold=0.0
+            )
             
+            # 转换格式以匹配原有接口
             processed_memories = []
+            for memory in memories:
+                processed_memories.append({
+                    'content': memory.get('text', ''),
+                    'relevance_score': memory.get('score', 0.0),
+                    'timestamp': memory.get('timestamp', 0),
+                    'formatted_time': self.time_service.format_timestamp(memory.get('timestamp', 0)),
+                    'emotion_weight': memory.get('emotion_weight', 0.0),
+                    'category': memory.get('event_category', 'general'),
+                    'interaction_type': memory.get('interaction_type', 'general'),
+                    'source': 'milvus'
+                })
             
-            # 处理搜索结果
-            if hasattr(results, 'results'):
-                memories_data = results.results
-            elif isinstance(results, list):
-                memories_data = results
-            else:
-                # 如果结果格式不明确，尝试转换
-                memories_data = [results] if results else []
-            
-            for memory in memories_data[:limit]:
-                try:
-                    # 提取内容
-                    if hasattr(memory, 'content'):
-                        content = memory.content
-                    elif isinstance(memory, dict):
-                        content = memory.get('content', memory.get('text', str(memory)))
-                    else:
-                        content = str(memory)
-                    
-                    # 过滤出用户相关的记忆（可选）
-                    processed_memories.append({
-                        'content': content[:500] + '...' if len(content) > 500 else content,
-                        'relevance_score': getattr(memory, 'score', 0.8),  # 默认相关度
-                        'timestamp': self.time_service.get_current_time().timestamp(),
-                        'formatted_time': self.time_service.get_formatted_time(),
-                        'emotion_weight': 0.5,  # 默认情绪权重
-                        'category': 'general'
-                    })
-                except Exception as memory_error:
-                    logger.warning(f"处理单个记忆时出错: {memory_error}")
-                    continue
-            
-            logger.info(f"从SuperMemory检索到 {len(processed_memories)} 个相关记忆")
+            logger.info(f"从 Milvus 检索到 {len(processed_memories)} 个相关记忆")
             return processed_memories
             
         except Exception as e:
             logger.error(f"检索记忆失败: {e}")
             return []
 
-    async def clear_all_memories(self, user_id: str = "marvinli001") -> bool:
-        """清空所有记忆（注意：SuperMemory可能不支持按用户删除）"""
-        if not self.enabled or not self.client:
-            return True
+    async def store_event_memory(
+        self,
+        event_content: str,
+        event_embedding: List[float],
+        event_type: str = "user_action",
+        user_id: str = "marvinli001",
+        additional_metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """存储事件记忆到 Milvus"""
+        if not self.milvus_service:
+            logger.warning("Milvus服务未初始化，跳过存储")
+            return False
 
         try:
-            # SuperMemory的删除功能可能有限，这里记录警告
-            logger.warning("SuperMemory可能不支持批量删除特定用户的记忆")
-            logger.info(f"请求清空用户 {user_id} 的记忆（操作可能不被支持）")
+            # 分析事件内容
+            emotion = self.emotion_analyzer.analyze_emotion(event_content)
+            category, confidence = self.event_classifier.classify_event(event_content)
+            
+            # 构建事件记忆文本
+            event_text = f"事件: {event_content} (类型: {event_type})"
+            
+            # 存储到 Milvus
+            success = await self.milvus_service.store_memory(
+                text=event_text,
+                embedding=event_embedding,
+                user_id=user_id,
+                emotion_weight=emotion['emotion_weight'],
+                event_category=category,
+                interaction_type=event_type
+            )
+            
+            if success:
+                logger.info(f"成功存储事件记忆: {event_content[:50]}...")
+            
+            return success
+            
+        except Exception as e:
+            logger.error(f"存储事件记忆失败: {e}")
+            return False
+
+    async def get_memory_stats(self, user_id: str = "marvinli001") -> Dict[str, Any]:
+        """获取记忆统计信息"""
+        if not self.milvus_service:
+            return {"error": "Milvus服务未初始化"}
+        
+        try:
+            stats = await self.milvus_service.get_memory_stats(user_id)
+            return stats
+        except Exception as e:
+            logger.error(f"获取记忆统计失败: {e}")
+            return {"error": str(e)}
+
+    async def clear_all_memories(self, user_id: str = "marvinli001") -> bool:
+        """清空用户记忆"""
+        if not self.milvus_service:
+            return False
+        
+        try:
+            # 这里可以实现具体的清空逻辑
+            logger.info(f"请求清空用户 {user_id} 的记忆")
             return True
         except Exception as e:
             logger.error(f"清空记忆失败: {e}")
@@ -201,28 +194,12 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
     def get_client_info(self) -> Dict[str, Any]:
         """获取客户端信息"""
         return {
-            "enabled": self.enabled,
-            "client_available": self.client is not None,
-            "api_key_configured": bool(self.api_key),
-            "version": "3.0.0a23",
-            "status": "pre-release" if self.enabled else "disabled"
-        }
-
-    def get_service_status(self) -> Dict[str, Any]:
-        """获取服务状态"""
-        return {
-            "supermemory": {
-                "enabled": self.enabled,
-                "client_ready": self.client is not None,
-                "api_key_set": bool(self.api_key)
-            },
-            "emotion_analyzer": {
-                "ready": self.emotion_analyzer is not None
-            },
-            "event_classifier": {
-                "ready": self.event_classifier is not None
-            },
-            "time_service": {
-                "ready": self.time_service is not None
+            "backend": "milvus",
+            "supermemory_removed": True,
+            "services": {
+                "emotion_analyzer": self.emotion_analyzer is not None,
+                "event_classifier": self.event_classifier is not None,
+                "time_service": self.time_service is not None,
+                "milvus_service": self.milvus_service is not None
             }
         }

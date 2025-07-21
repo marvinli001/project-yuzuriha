@@ -37,9 +37,9 @@ class MilvusService:
             raise
 
     async def _create_collection(self):
-        """根据Zilliz Cloud文档创建集合 - 使用正确的API方法"""
+        """根据Zilliz Cloud文档创建集合"""
         try:
-            # 检查集合是否存在 - 使用正确的方法名
+            # 检查集合是否存在
             collections = self.client.list_collections()
             if self.collection_name in collections:
                 logger.info(f"集合 {self.collection_name} 已存在")
@@ -48,10 +48,10 @@ class MilvusService:
             # 使用简化的集合创建方式
             self.client.create_collection(
                 collection_name=self.collection_name,
-                dimension=self.embedding_dim,  # 向量维度
-                metric_type="COSINE",          # 相似度度量
-                auto_id=True,                  # 自动生成ID
-                consistency_level="Strong"     # 一致性级别
+                dimension=self.embedding_dim,
+                metric_type="COSINE",
+                auto_id=True,
+                consistency_level="Strong"
             )
 
             logger.info(f"成功创建集合: {self.collection_name}")
@@ -75,13 +75,13 @@ class MilvusService:
             
             # 准备要插入的数据
             data = [{
-                "vector": embedding,              # 向量字段
-                "text": text,                    # 文本内容
-                "timestamp": current_timestamp,   # 时间戳
-                "user_id": user_id,              # 用户ID
-                "emotion_weight": emotion_weight, # 情绪权重
-                "event_category": event_category, # 事件类别
-                "interaction_type": interaction_type # 交互类型
+                "vector": embedding,
+                "text": text,
+                "timestamp": current_timestamp,
+                "user_id": user_id,
+                "emotion_weight": emotion_weight,
+                "event_category": event_category,
+                "interaction_type": interaction_type
             }]
             
             # 插入数据
@@ -101,9 +101,10 @@ class MilvusService:
         self,
         query_embedding: List[float],
         limit: int = 5,
-        emotion_weight_threshold: float = 0.0
+        emotion_weight_threshold: float = 0.0,
+        user_id: str = None
     ) -> List[Dict[str, Any]]:
-        """搜索相似记忆 - 修复 anns_field 重复参数问题"""
+        """搜索相似记忆 - 增强版本"""
         try:
             # 构建搜索参数
             search_params = {
@@ -111,25 +112,29 @@ class MilvusService:
                 "params": {"nprobe": 10}
             }
             
-            # 构建过滤条件（如果需要）
-            filter_expr = None
+            # 构建过滤条件
+            filter_conditions = []
             if emotion_weight_threshold > 0:
-                filter_expr = f"emotion_weight >= {emotion_weight_threshold}"
+                filter_conditions.append(f"emotion_weight >= {emotion_weight_threshold}")
+            if user_id:
+                filter_conditions.append(f'user_id == "{user_id}"')
             
-            # 执行搜索 - 修复参数问题，移除重复的 anns_field
+            filter_expr = " and ".join(filter_conditions) if filter_conditions else None
+            
+            # 执行搜索
             results = self.client.search(
                 collection_name=self.collection_name,
                 data=[query_embedding],
                 search_params=search_params,
                 limit=limit,
-                filter=filter_expr,  # 使用 filter 而不是 expr
+                filter=filter_expr,
                 output_fields=["text", "timestamp", "user_id", "emotion_weight", "event_category", "interaction_type"]
             )
             
             # 处理搜索结果
             memories = []
             if results and len(results) > 0:
-                for hit in results[0]:  # results[0] 因为我们只查询了一个向量
+                for hit in results[0]:
                     memory = {
                         "text": hit.get("entity", {}).get("text", "") or hit.get("text", ""),
                         "score": float(hit.get("distance", 0.0)),
@@ -157,9 +162,9 @@ class MilvusService:
             # 查询用户的记忆数量
             user_memories = self.client.query(
                 collection_name=self.collection_name,
-                filter=f'user_id == "{user_id}"',  # 使用 filter 而不是 expr
+                filter=f'user_id == "{user_id}"',
                 output_fields=["event_category"],
-                limit=1000  # 限制查询数量
+                limit=1000
             )
             
             # 统计类别分布
@@ -172,7 +177,8 @@ class MilvusService:
                 "total_memories": stats.get("row_count", 0),
                 "user_memories": len(user_memories),
                 "category_distribution": category_distribution,
-                "collection_name": self.collection_name
+                "collection_name": self.collection_name,
+                "backend": "milvus_only"
             }
             
         except Exception as e:
@@ -181,7 +187,8 @@ class MilvusService:
                 "total_memories": 0,
                 "user_memories": 0,
                 "category_distribution": {},
-                "error": str(e)
+                "error": str(e),
+                "backend": "milvus_only"
             }
 
     def get_client_info(self) -> Dict[str, Any]:
@@ -190,5 +197,6 @@ class MilvusService:
             "connected": self.client is not None,
             "collection_name": self.collection_name,
             "embedding_dim": self.embedding_dim,
-            "uri_configured": bool(self.uri)
+            "uri_configured": bool(self.uri),
+            "backend": "milvus_only"
         }
