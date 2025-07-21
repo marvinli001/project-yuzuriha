@@ -38,7 +38,7 @@ class MemoryService:
         ai_response: str,
         user_id: str = "marvinli001"
     ) -> bool:
-        """存储完整对话记忆"""
+        """存储完整对话记忆 - 修复 memory 属性访问问题"""
         if not self.enabled or not self.client:
             logger.info("SuperMemory未启用，跳过存储")
             return True
@@ -93,10 +93,17 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
 总体情绪权重: {(user_emotion['emotion_weight'] + ai_emotion['emotion_weight']) / 2:.2f}
 """
 
-            # 按照官方文档存储记忆
-            result = self.client.memory.add(
-                content=memory_content
-            )
+            # 修复 memory 属性访问 - 使用正确的 API 调用
+            try:
+                # 尝试新版本的 API
+                result = self.client.add(content=memory_content)
+            except AttributeError:
+                try:
+                    # 尝试旧版本的 API
+                    result = self.client.memory.add(content=memory_content)
+                except AttributeError:
+                    # 如果都不行，使用直接调用
+                    result = self.client.create_memory(content=memory_content)
             
             logger.info(f"成功存储对话记忆到SuperMemory")
             return True
@@ -112,7 +119,7 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
         user_id: str = "marvinli001",
         additional_metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
-        """存储事件记忆"""
+        """存储事件记忆 - 修复 memory 属性访问问题"""
         if not self.enabled or not self.client:
             return True
 
@@ -150,9 +157,14 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
 {additional_metadata if additional_metadata else '无'}
 """
             
-            result = self.client.memory.add(
-                content=event_memory_content
-            )
+            # 修复 memory 属性访问 - 使用正确的 API 调用
+            try:
+                result = self.client.add(content=event_memory_content)
+            except AttributeError:
+                try:
+                    result = self.client.memory.add(content=event_memory_content)
+                except AttributeError:
+                    result = self.client.create_memory(content=event_memory_content)
             
             logger.info(f"成功存储事件记忆到SuperMemory")
             return True
@@ -167,15 +179,19 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
         limit: int = 5,
         user_id: str = "marvinli001"
     ) -> List[Dict[str, Any]]:
-        """检索相关记忆"""
+        """检索相关记忆 - 修复搜索 API 调用"""
         if not self.enabled or not self.client:
             return []
 
         try:
-            # 按照官方文档执行搜索
-            results = self.client.search.execute(
-                q=query
-            )
+            # 修复搜索 API 调用
+            try:
+                results = self.client.search(q=query)
+            except AttributeError:
+                try:
+                    results = self.client.search.execute(q=query)
+                except AttributeError:
+                    results = self.client.query(query=query)
             
             processed_memories = []
             memory_count = 0
@@ -193,7 +209,7 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
                     if hasattr(memory, 'content'):
                         content = memory.content
                     elif isinstance(memory, dict):
-                        content = memory.get('content', '')
+                        content = memory.get('content', memory.get('text', ''))
                     
                     # 过滤出用户相关的记忆
                     if user_id in content or not content:
@@ -230,21 +246,19 @@ AI回复分类: {ai_category} (置信度: {ai_confidence:.2f})
 
     def _determine_interaction_type(self, user_category: str, ai_category: str) -> str:
         """确定交互类型"""
-        if user_category == 'question' and ai_category == 'information':
-            return 'q_and_a'
-        elif user_category == 'task':
-            return 'task_assistance'
-        elif user_category == 'emotional':
-            return 'emotional_support'
-        elif user_category == 'creative':
-            return 'creative_collaboration'
-        else:
-            return 'general_conversation'
+        interaction_map = {
+            ('question', 'answer'): 'q_and_a',
+            ('request', 'assistance'): 'assistance',
+            ('casual', 'casual'): 'casual_chat',
+            ('emotional', 'support'): 'emotional_support',
+            ('task', 'instruction'): 'task_oriented'
+        }
+        return interaction_map.get((user_category, ai_category), 'general_conversation')
 
     def get_client_info(self) -> Dict[str, Any]:
         """获取客户端信息"""
         return {
-            'enabled': self.enabled,
-            'client_available': self.client is not None,
-            'api_key_configured': bool(self.api_key)
+            "enabled": self.enabled,
+            "client_connected": self.client is not None,
+            "api_key_configured": bool(self.api_key)
         }

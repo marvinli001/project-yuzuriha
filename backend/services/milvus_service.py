@@ -103,7 +103,7 @@ class MilvusService:
         limit: int = 5,
         emotion_weight_threshold: float = 0.0
     ) -> List[Dict[str, Any]]:
-        """搜索相似记忆"""
+        """搜索相似记忆 - 修复 anns_field 重复参数问题"""
         try:
             # 构建搜索参数
             search_params = {
@@ -116,14 +116,13 @@ class MilvusService:
             if emotion_weight_threshold > 0:
                 filter_expr = f"emotion_weight >= {emotion_weight_threshold}"
             
-            # 执行搜索
+            # 执行搜索 - 修复参数问题，移除重复的 anns_field
             results = self.client.search(
                 collection_name=self.collection_name,
                 data=[query_embedding],
-                anns_field="vector",
                 search_params=search_params,
                 limit=limit,
-                expr=filter_expr,
+                filter=filter_expr,  # 使用 filter 而不是 expr
                 output_fields=["text", "timestamp", "user_id", "emotion_weight", "event_category", "interaction_type"]
             )
             
@@ -132,13 +131,13 @@ class MilvusService:
             if results and len(results) > 0:
                 for hit in results[0]:  # results[0] 因为我们只查询了一个向量
                     memory = {
-                        "text": hit.get("text", ""),
-                        "score": float(hit.distance) if hasattr(hit, 'distance') else 0.0,
-                        "timestamp": hit.get("timestamp", 0),
-                        "user_id": hit.get("user_id", ""),
-                        "emotion_weight": hit.get("emotion_weight", 0.0),
-                        "event_category": hit.get("event_category", "general"),
-                        "interaction_type": hit.get("interaction_type", "general")
+                        "text": hit.get("entity", {}).get("text", "") or hit.get("text", ""),
+                        "score": float(hit.get("distance", 0.0)),
+                        "timestamp": hit.get("entity", {}).get("timestamp", 0) or hit.get("timestamp", 0),
+                        "user_id": hit.get("entity", {}).get("user_id", "") or hit.get("user_id", ""),
+                        "emotion_weight": hit.get("entity", {}).get("emotion_weight", 0.0) or hit.get("emotion_weight", 0.0),
+                        "event_category": hit.get("entity", {}).get("event_category", "general") or hit.get("event_category", "general"),
+                        "interaction_type": hit.get("entity", {}).get("interaction_type", "general") or hit.get("interaction_type", "general")
                     }
                     memories.append(memory)
             
@@ -158,7 +157,7 @@ class MilvusService:
             # 查询用户的记忆数量
             user_memories = self.client.query(
                 collection_name=self.collection_name,
-                expr=f'user_id == "{user_id}"',
+                filter=f'user_id == "{user_id}"',  # 使用 filter 而不是 expr
                 output_fields=["event_category"],
                 limit=1000  # 限制查询数量
             )

@@ -167,6 +167,7 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
         logger.error(f"❌ 聊天处理错误: {e}")
         raise HTTPException(status_code=500, detail=f"处理聊天请求时发生错误: {str(e)}")
 
+# 在主程序的存储对话记忆函数中修复调用方式
 async def store_conversation_memories(
     user_message: str,
     ai_response: str,
@@ -175,17 +176,13 @@ async def store_conversation_memories(
     user_category: str,
     user_confidence: float
 ):
-    """后台任务：存储对话记忆"""
+    """后台任务：存储对话记忆 - 修复存储错误"""
     try:
-        # 1. 存储到SuperMemory（如果可用）
-        supermemory_success = False
-        try:
-            supermemory_success = await memory_service.store_conversation_memory(
-                user_message, ai_response
-            )
-            logger.info(f"SuperMemory存储: {'成功' if supermemory_success else '失败'}")
-        except Exception as e:
-            logger.warning(f"SuperMemory存储失败，继续使用Milvus: {e}")
+        # 1. 存储到SuperMemory - 修复调用方式
+        supermemory_success = await memory_service.store_conversation_memory(
+            user_message, ai_response
+        )
+        logger.info(f"SuperMemory存储: {'成功' if supermemory_success else '失败'}")
         
         # 2. 分析AI回复
         ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
@@ -216,7 +213,7 @@ async def store_conversation_memories(
         logger.info(f"✓ 记忆存储完成 - SuperMemory: {'✓' if supermemory_success else '✗'}, Milvus用户: {'✓' if milvus_user_success else '✗'}, MilvusAI: {'✓' if milvus_ai_success else '✗'}")
         
     except Exception as e:
-        logger.error(f"❌ 存储对话记忆失败: {e}")
+        logger.error(f"存储对话记忆时发生错误: {e}")
 
 # 其余路由保持不变...
 @app.get("/health", response_model=HealthResponse)
