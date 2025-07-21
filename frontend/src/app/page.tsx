@@ -186,60 +186,62 @@ export default function ChatPage() {
           
           <div className="flex items-center space-x-2">
             <div className="text-sm font-medium text-gray-900">Project Yuzuriha</div>
-            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+            <div className="w-2 h-2 bg-gray-400 rounded-full"></div>
           </div>
         </header>
 
         {/* 主要内容区域 */}
         <div className="flex-1 flex flex-col">
           {messages.length === 0 ? (
-            /* 欢迎页面 */
-            <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
-              <div className="text-center max-w-4xl mx-auto">
-                <div className="mb-8">
-                  <h1 className="text-4xl font-bold text-gray-900 mb-4">
-                    你好，我是 Yuzuriha
-                  </h1>
-                </div>
+            <div className="flex flex-col items-center justify-center h-full px-4">
+              <div className="text-center mb-8">
+                <h1 className="text-4xl font-semibold text-gray-900 mb-2">你好，我是 Yuzuriha</h1>
+                <p className="text-gray-600">在时刻准备着。</p>
+              </div>
+              <div className="w-full max-w-2xl">
+                <ChatInput 
+                  onSendMessage={sendMessage} 
+                  disabled={isLoading} 
+                  hasMessages={false}
+                />
               </div>
             </div>
           ) : (
-            /* 聊天消息区域 */
-            <div 
-              ref={messagesContainerRef}
-              className="flex-1 overflow-y-auto px-4 py-6"
-            >
-              <div className="max-w-3xl mx-auto space-y-6">
-                {messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
-                ))}
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="max-w-xs lg:max-w-2xl px-4 py-3 rounded-lg bg-gray-100">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      </div>
+            <>
+              <div className="flex-1 overflow-y-auto px-4 py-6 pb-20">
+                <div className="max-w-4xl mx-auto space-y-6">
+                  {messages.map((message, index) => (
+                    <div key={message.id} className="message-animate">
+                      <ChatMessage message={message} />
                     </div>
-                  </div>
-                )}
+                  ))}
+                  {isLoading && (
+                    <div className="message-animate">
+                      <ChatMessage 
+                        message={{
+                          id: 'loading',
+                          role: 'assistant',
+                          content: '',
+                          timestamp: new Date().toISOString()
+                        }}
+                        isLoading={true}
+                      />
+                    </div>
+                  )}
+                </div>
                 <div ref={messagesEndRef} />
               </div>
-            </div>
+              <ChatInput 
+                onSendMessage={sendMessage} 
+                disabled={isLoading} 
+                hasMessages={true}
+              />
+            </>
           )}
 
-          {/* 输入区域 */}
-          <div className="border-t border-gray-200 bg-white">
-            <div className="max-w-3xl mx-auto px-4 py-4">
-              <ChatInput
-                onSendMessage={sendMessage}
-                disabled={isLoading}
-              />
-              <div className="text-xs text-gray-500 text-center mt-2">
-                Yuzuriha 可能会出错。请核实重要信息。
-              </div>
-            </div>
+          {/* 底部提示 */}
+          <div className="text-xs text-gray-500 text-center py-2">
+            Yuzuriha 可能会出错。请核实重要信息。
           </div>
         </div>
       </div>

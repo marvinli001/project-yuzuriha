@@ -6,9 +6,10 @@ import { Send, Paperclip, Mic } from 'lucide-react'
 interface ChatInputProps {
   onSendMessage: (message: string) => void
   disabled?: boolean
+  hasMessages?: boolean
 }
 
-export default function ChatInput({ onSendMessage, disabled = false }: ChatInputProps) {
+export default function ChatInput({ onSendMessage, disabled = false, hasMessages = false }: ChatInputProps) {
   const [message, setMessage] = useState('')
   const [isComposing, setIsComposing] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -54,14 +55,14 @@ export default function ChatInput({ onSendMessage, disabled = false }: ChatInput
   }
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-chat-bg border-t border-gray-700 p-4">
+    <div className={`${hasMessages ? 'fixed bottom-0 left-0 right-0' : 'relative'} bg-white border-t border-gray-200 p-4`}>
       <div className="max-w-4xl mx-auto">
         <form onSubmit={handleSubmit} className="relative">
-          <div className="flex items-end gap-3 bg-chat-input border border-gray-600 rounded-lg p-3 focus-within:ring-2 focus-within:ring-chat-user focus-within:border-transparent">
+          <div className="flex items-end gap-3 bg-white border border-gray-300 rounded-xl p-3 focus-within:ring-2 focus-within:ring-green-500 focus-within:border-transparent shadow-sm">
             {/* 附件按钮 */}
             <button
               type="button"
-              className="flex-shrink-0 p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+              className="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               title="附件 (即将推出)"
               disabled
             >
@@ -77,7 +78,7 @@ export default function ChatInput({ onSendMessage, disabled = false }: ChatInput
               onCompositionStart={handleCompositionStart}
               onCompositionEnd={handleCompositionEnd}
               placeholder={disabled ? "AI正在回复中..." : "输入消息..."}
-              className="flex-1 bg-transparent text-black placeholder-gray-400 resize-none border-0 outline-0 min-h-[24px] max-h-[120px] py-1"
+              className="flex-1 bg-transparent text-gray-900 placeholder-gray-400 resize-none border-0 outline-0 min-h-[24px] max-h-[120px] py-1"
               rows={1}
               disabled={disabled}
               style={{ lineHeight: '1.5' }}
@@ -89,15 +90,15 @@ export default function ChatInput({ onSendMessage, disabled = false }: ChatInput
                 <button
                   type="submit"
                   disabled={disabled || isComposing}
-                  className="p-2 bg-chat-user hover:bg-chat-user/80 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                  className="p-2 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors text-white"
                   title="发送消息"
                 >
-                  <Send size={18} className="text-white" />
+                  <Send size={18} />
                 </button>
               ) : (
                 <button
                   type="button"
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                   title="语音输入 (即将推出)"
                   disabled
                 >
@@ -107,11 +108,6 @@ export default function ChatInput({ onSendMessage, disabled = false }: ChatInput
             </div>
           </div>
         </form>
-        
-        {/* 提示文本 */}
-        <div className="text-xs text-gray-500 mt-2 text-center">
-          按 Enter 发送消息，Shift + Enter 换行
-        </div>
       </div>
     </div>
   )

@@ -51,14 +51,14 @@ export default function Sidebar({
       {/* Sidebar */}
       <div
         ref={sidebarRef}
-        className={`fixed left-0 top-0 h-full w-80 bg-chat-sidebar border-r border-gray-700 transform transition-transform duration-300 ease-in-out z-50 ${
+        className={`fixed left-0 top-0 h-full w-80 bg-gray-50 border-r border-gray-200 transform transition-transform duration-300 ease-in-out z-50 ${
           isOpen ? 'translate-x-0' : '-translate-x-full'
         } md:relative md:translate-x-0 md:z-0`}
       >
         <div className="flex flex-col h-full">
           {/* Header */}
-          <div className="flex items-center justify-between p-4 border-b border-gray-700">
-            <h2 className="text-lg font-semibold text-white">Chats</h2>
+          <div className="flex items-center justify-between p-4 border-b border-gray-200">
+            <h2 className="text-lg font-semibold text-gray-900">Chats</h2>
             <div className="flex items-center space-x-2">
               <button
                 onClick={onNewChat}

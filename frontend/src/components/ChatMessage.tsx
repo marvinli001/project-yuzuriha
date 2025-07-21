@@ -31,13 +31,13 @@ export default function ChatMessage({ message, isLoading = false }: ChatMessageP
   }
 
   return (
-    <div className={`group flex gap-4 p-6 ${isUser ? 'bg-transparent' : 'bg-gray-800/30'} rounded-lg`}>
+    <div className={`group flex gap-4 p-6 ${isUser ? 'bg-transparent' : 'bg-gray-50'} rounded-lg`}>
       {/* 头像 */}
       <div className="flex-shrink-0">
         <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
           isUser 
-            ? 'bg-chat-user text-white' 
-            : 'bg-gray-600 text-white'
+            ? 'bg-chat-user text-black' 
+            : 'bg-gray-600 text-black'
         }`}>
           {isUser ? <User size={16} /> : <Bot size={16} />}
         </div>
@@ -59,7 +59,7 @@ export default function ChatMessage({ message, isLoading = false }: ChatMessageP
               className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-700 rounded transition-all"
               title="复制消息"
             >
-              {copied ? <Check size={14} className="text-green-400" /> : <Copy size={14} className="text-gray-400" />}
+              {copied ? <Check size={14} className="text-gray-400" /> : <Copy size={14} className="text-gray-400" />}
             </button>
           )}
         </div>

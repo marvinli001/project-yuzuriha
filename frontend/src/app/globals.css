@@ -24,6 +24,16 @@
     --input: 0 0% 89.8%;
     --ring: 0 0% 3.9%;
     --radius: 0.5rem;
+    
+    /* OpenAI风格的白色系颜色 */
+    --chat-bg: #ffffff;
+    --chat-sidebar: #f7f7f8;
+    --chat-input: #ffffff;
+    --chat-user: #bbbbbb;
+    --chat-assistant: #ffffff;
+    --text-primary: #2d333a;
+    --text-secondary: #6e7681;
+    --border-color: #d1d5db;
   }
 }
 
@@ -32,7 +42,7 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-white text-foreground;
   }
 }
 
@@ -81,31 +91,4 @@
 
 .btn-hover:hover {
   @apply transform -translate-y-0.5;
-}
-
-/* 统一颜色变量 */
-:root {
-  --chat-bg: #ffffff;
-  --chat-sidebar: #2d3748;
-  --chat-input: #ffffff;
-  --chat-user: #4299e1;
-  --chat-assistant: #2d3748;
-  --text-primary: #000000;
-  --text-secondary: #4a5568;
-  --border-color: #e2e8f0;
-}
-
-/* 统一文本颜色 */
-.chat-message-user,
-.chat-message-assistant {
-  color: var(--text-primary) !important;
-}
-
-/* 确保所有消息文本都是黑色 */
-.prose.prose-invert {
-  color: var(--text-primary) !important;
-}
-
-.prose.prose-invert .whitespace-pre-wrap {
-  color: var(--text-primary) !important;
 }
