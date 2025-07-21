@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Message, ChatHistory } from '@/types/chat'
 import Sidebar from '@/components/Sidebar'
 import ChatMessage from '@/components/ChatMessage'
@@ -33,22 +33,30 @@ export default function ChatPage() {
     }
   }, [currentChatId])
 
+  // 优化的滚动到底部函数
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
+  }, [])
+
+  // 节流的滚动处理
   useEffect(() => {
-    scrollToBottom()
-  }, [messages])
+    const timeoutId = setTimeout(() => {
+      scrollToBottom()
+    }, 100)
+    
+    return () => clearTimeout(timeoutId)
+  }, [messages, scrollToBottom])
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
-
-  const startNewChat = () => {
+  const startNewChat = useCallback(() => {
     const newChatId = `chat_${Date.now()}`
     setCurrentChatId(newChatId)
     setMessages([])
     setSidebarOpen(false)
-  }
+  }, [])
 
-  const saveCurrentChat = (updatedMessages: Message[]) => {
+  const saveCurrentChat = useCallback((updatedMessages: Message[]) => {
     if (!currentChatId || updatedMessages.length === 0) return
 
     const chatTitle = updatedMessages[0]?.content.slice(0, 40) + (updatedMessages[0]?.content.length > 40 ? '...' : '') || 'New Chat'
@@ -62,33 +70,36 @@ export default function ChatPage() {
       timestamp: new Date().toISOString()
     }
 
-    const updatedHistory = chatHistory.filter(chat => chat.id !== currentChatId)
-    updatedHistory.unshift(chatData)
-    
-    setChatHistory(updatedHistory)
-    localStorage.setItem('yuzuriha_chat_history', JSON.stringify(updatedHistory))
-  }
+    setChatHistory(prev => {
+      const updatedHistory = prev.filter(chat => chat.id !== currentChatId)
+      updatedHistory.unshift(chatData)
+      localStorage.setItem('yuzuriha_chat_history', JSON.stringify(updatedHistory))
+      return updatedHistory
+    })
+  }, [currentChatId])
 
-  const loadChat = (chatId: string) => {
+  const loadChat = useCallback((chatId: string) => {
     const chat = chatHistory.find(c => c.id === chatId)
     if (chat) {
       setCurrentChatId(chatId)
       setMessages(chat.messages)
       setSidebarOpen(false)
     }
-  }
+  }, [chatHistory])
 
-  const deleteChat = (chatId: string) => {
-    const updatedHistory = chatHistory.filter(chat => chat.id !== chatId)
-    setChatHistory(updatedHistory)
-    localStorage.setItem('yuzuriha_chat_history', JSON.stringify(updatedHistory))
+  const deleteChat = useCallback((chatId: string) => {
+    setChatHistory(prev => {
+      const updatedHistory = prev.filter(chat => chat.id !== chatId)
+      localStorage.setItem('yuzuriha_chat_history', JSON.stringify(updatedHistory))
+      return updatedHistory
+    })
     
     if (chatId === currentChatId) {
       startNewChat()
     }
-  }
+  }, [currentChatId, startNewChat])
 
-  const sendMessage = async (content: string) => {
+  const sendMessage = useCallback(async (content: string) => {
     if (!content.trim() || isLoading) return
 
     const userMessage: Message = {
@@ -147,14 +158,10 @@ export default function ChatPage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  const handleExampleClick = (prompt: string) => {
-    sendMessage(prompt)
-  }
+  }, [messages, isLoading, saveCurrentChat])
 
   return (
-    <div className="flex h-full bg-white">
+    <div className="flex h-screen bg-white overflow-hidden">
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -165,9 +172,9 @@ export default function ChatPage() {
         currentChatId={currentChatId}
       />
 
-      <div className="flex flex-col flex-1 relative">
-        {/* 顶部导航栏 */}
-        <header className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
+      <div className="flex flex-col flex-1 min-w-0">
+        {/* 顶部导航栏 - 固定定位 */}
+        <header className="flex items-center justify-between p-4 border-b border-gray-200 bg-white flex-shrink-0 z-10">
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setSidebarOpen(true)}
@@ -191,7 +198,7 @@ export default function ChatPage() {
         </header>
 
         {/* 主要内容区域 */}
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 flex flex-col min-h-0">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full px-4">
               <div className="text-center mb-8">
@@ -208,41 +215,48 @@ export default function ChatPage() {
             </div>
           ) : (
             <>
-              <div className="flex-1 overflow-y-auto px-4 py-6 pb-20">
+              <div 
+                ref={messagesContainerRef}
+                className="flex-1 overflow-y-auto px-4 py-6"
+                style={{ minHeight: 0 }}
+              >
                 <div className="max-w-4xl mx-auto space-y-6">
-                  {messages.map((message, index) => (
-                    <div key={message.id} className="message-animate">
-                      <ChatMessage message={message} />
-                    </div>
+                  {messages.map((message) => (
+                    <ChatMessage key={message.id} message={message} />
                   ))}
                   {isLoading && (
-                    <div className="message-animate">
-                      <ChatMessage 
-                        message={{
-                          id: 'loading',
-                          role: 'assistant',
-                          content: '',
-                          timestamp: new Date().toISOString()
-                        }}
-                        isLoading={true}
-                      />
+                    <div className="flex items-start space-x-3">
+                      <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
+                        <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
+                      </div>
+                      <div className="flex space-x-1">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                        <div 
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
+                          style={{ animationDelay: '0.1s' }}
+                        ></div>
+                        <div 
+                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
+                          style={{ animationDelay: '0.2s' }}
+                        ></div>
+                      </div>
                     </div>
                   )}
+                  <div ref={messagesEndRef} />
                 </div>
-                <div ref={messagesEndRef} />
               </div>
-              <ChatInput 
-                onSendMessage={sendMessage} 
-                disabled={isLoading} 
-                hasMessages={true}
-              />
+
+              <div className="flex-shrink-0 px-4 py-6 border-t border-gray-200 bg-white">
+                <div className="max-w-4xl mx-auto">
+                  <ChatInput 
+                    onSendMessage={sendMessage} 
+                    disabled={isLoading} 
+                    hasMessages={true}
+                  />
+                </div>
+              </div>
             </>
           )}
-
-          {/* 底部提示 */}
-          <div className="text-xs text-gray-500 text-center py-2">
-            Yuzuriha 可能会出错。请核实重要信息。
-          </div>
         </div>
       </div>
     </div>

@@ -92,3 +92,57 @@
 .btn-hover:hover {
   @apply transform -translate-y-0.5;
 }
+
+/* 现有样式保持不变，添加以下优化 */
+
+/* 滚动优化 */
+.scroll-smooth {
+  scroll-behavior: smooth;
+}
+
+/* 消息容器优化 */
+.messages-container {
+  transform: translateZ(0); /* 启用硬件加速 */
+  -webkit-transform: translateZ(0);
+  will-change: scroll-position;
+}
+
+/* 防止布局抖动 */
+.message-item {
+  contain: layout style paint;
+}
+
+/* 优化滚动条样式 */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
+
+/* 确保容器不会溢出 */
+.chat-container {
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 消息列表容器 */
+.message-list-container {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1rem;
+}
