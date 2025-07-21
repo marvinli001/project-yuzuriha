@@ -119,11 +119,12 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
         user_emotion = emotion_analyzer.analyze_emotion(request.message)
         user_category, user_confidence = event_classifier.classify_event(request.message)
         
-        # 3. 从 Milvus 检索相关记忆
+        # 3. 从 Milvus 检索相关记忆 - 添加 user_id 参数
         milvus_memories = await memory_service.retrieve_relevant_memories(
             query=request.message,
             query_embedding=query_embedding,
-            limit=5
+            limit=5,
+            user_id="marvinli001"  # 添加这个参数
         )
         logger.info(f"从 Milvus 检索到 {len(milvus_memories)} 个记忆")
         

@@ -42,9 +42,6 @@ class MemoryService:
             # 获取时间上下文
             time_context = self.time_service.get_time_context()
             
-            # 创建用户消息的嵌入（需要外部传入或者通过 OpenAI 服务创建）
-            # 这里我们将在调用时传入嵌入
-            
             # 构建对话记忆内容
             conversation_content = f"""对话记录 - {time_context['current_time']}
 
@@ -91,28 +88,35 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
             memories = await self.milvus_service.search_memories(
                 query_embedding=query_embedding,
                 limit=limit,
-                emotion_weight_threshold=0.0
+                emotion_weight_threshold=0.0,
+                user_id=user_id
             )
             
             # 转换格式以匹配原有接口
             processed_memories = []
             for memory in memories:
-                processed_memories.append({
-                    'content': memory.get('text', ''),
-                    'relevance_score': memory.get('score', 0.0),
-                    'timestamp': memory.get('timestamp', 0),
-                    'formatted_time': self.time_service.format_timestamp(memory.get('timestamp', 0)),
-                    'emotion_weight': memory.get('emotion_weight', 0.0),
-                    'category': memory.get('event_category', 'general'),
-                    'interaction_type': memory.get('interaction_type', 'general'),
-                    'source': 'milvus'
-                })
+                # 安全地处理记忆数据
+                try:
+                    processed_memory = {
+                        'content': str(memory.get('text', '')),
+                        'relevance_score': float(memory.get('score', 0.0)),
+                        'timestamp': int(memory.get('timestamp', 0)),
+                        'formatted_time': self.time_service.format_timestamp(int(memory.get('timestamp', 0))),
+                        'emotion_weight': float(memory.get('emotion_weight', 0.0)),
+                        'category': str(memory.get('event_category', 'general')),
+                        'interaction_type': str(memory.get('interaction_type', 'general')),
+                        'source': 'milvus'
+                    }
+                    processed_memories.append(processed_memory)
+                except Exception as mem_error:
+                    logger.warning(f"处理单个记忆时出错: {mem_error}")
+                    continue
             
             logger.info(f"从 Milvus 检索到 {len(processed_memories)} 个相关记忆")
             return processed_memories
             
         except Exception as e:
-            logger.error(f"检索记忆失败: {e}")
+            logger.error(f"检索记忆失败: {e}", exc_info=True)
             return []
 
     async def store_event_memory(
