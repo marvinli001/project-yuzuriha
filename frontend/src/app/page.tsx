@@ -60,7 +60,8 @@ export default function ChatPage() {
       title: chatTitle,
       messages: updatedMessages,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString()
     }
 
     const updatedHistory = chatHistory.filter(chat => chat.id !== currentChatId)

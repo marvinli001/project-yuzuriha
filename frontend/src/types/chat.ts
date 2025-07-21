@@ -11,6 +11,7 @@ export interface ChatHistory {
   messages: Message[]
   createdAt: string
   updatedAt: string
+  timestamp: string
 }
 
 export interface ChatRequest {
