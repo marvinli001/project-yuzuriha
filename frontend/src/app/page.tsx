@@ -5,7 +5,7 @@ import { Message, ChatHistory } from '@/types/chat'
 import Sidebar from '@/components/Sidebar'
 import ChatMessage from '@/components/ChatMessage'
 import ChatInput from '@/components/ChatInput'
-import { Menu, Plus } from 'lucide-react'
+import { Menu, Plus, MessageCircle, Lightbulb, Code, Zap } from 'lucide-react'
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -15,6 +15,34 @@ export default function ChatPage() {
   const [currentChatId, setCurrentChatId] = useState<string>('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+
+  // 示例提示
+  const examplePrompts = [
+    {
+      icon: MessageCircle,
+      title: "创建内容",
+      description: "帮我写一篇关于人工智能的文章",
+      prompt: "帮我写一篇关于人工智能发展历程的文章，包含关键里程碑"
+    },
+    {
+      icon: Lightbulb,
+      title: "解答问题",
+      description: "解释量子计算的基本原理",
+      prompt: "请用简单易懂的语言解释量子计算的基本原理和应用"
+    },
+    {
+      icon: Code,
+      title: "编程帮助",
+      description: "帮我写一个Python函数",
+      prompt: "帮我写一个Python函数来处理JSON数据并进行数据清洗"
+    },
+    {
+      icon: Zap,
+      title: "头脑风暴",
+      description: "为我的项目提供创新想法",
+      prompt: "为一个环保主题的移动应用提供5个创新功能想法"
+    }
+  ]
 
   // 初始化聊天历史
   useEffect(() => {
@@ -28,13 +56,11 @@ export default function ChatPage() {
       }
     }
     
-    // 如果没有当前聊天，创建新的
     if (!currentChatId) {
       startNewChat()
     }
   }, [currentChatId])
 
-  // 自动滚动到底部
   useEffect(() => {
     scrollToBottom()
   }, [messages])
@@ -105,19 +131,22 @@ export default function ChatPage() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: content,
-          history: messages.slice(-10) // 发送最近10条消息作为上下文
+          message: content.trim(),
+          history: messages.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }))
         }),
       })
 
       if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`)
+        throw new Error(`HTTP error! status: ${response.status}`)
       }
 
       const data = await response.json()
@@ -125,7 +154,7 @@ export default function ChatPage() {
       const assistantMessage: Message = {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: data.response || '抱歉，我无法生成回复。',
+        content: data.response,
         timestamp: new Date().toISOString()
       }
 
@@ -138,7 +167,7 @@ export default function ChatPage() {
       const errorMessage: Message = {
         id: `msg_${Date.now() + 1}`,
         role: 'assistant',
-        content: '抱歉，发生了错误。请检查网络连接后重试。',
+        content: '抱歉，发送消息时出现错误。请检查网络连接并重试。',
         timestamp: new Date().toISOString()
       }
       const finalMessages = [...updatedMessages, errorMessage]
@@ -148,9 +177,12 @@ export default function ChatPage() {
     }
   }
 
+  const handleExampleClick = (prompt: string) => {
+    sendMessage(prompt)
+  }
+
   return (
-    <div className="flex h-screen w-screen bg-chat-bg overflow-hidden">
-      {/* 侧边栏 */}
+    <div className="flex h-full bg-white">
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -161,87 +193,121 @@ export default function ChatPage() {
         currentChatId={currentChatId}
       />
 
-      {/* 主聊天区域 */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex flex-col flex-1 relative">
         {/* 顶部导航栏 */}
-        <header className="flex items-center justify-between px-4 py-3 border-b border-gray-700 bg-chat-bg/95 backdrop-blur-sm">
-          <button
-            onClick={() => setSidebarOpen(true)}
-            className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            aria-label="打开菜单"
-          >
-            <Menu size={20} className="text-gray-300" />
-          </button>
+        <header className="flex items-center justify-between p-4 border-b border-gray-200 bg-white">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              <Menu className="w-5 h-5 text-gray-600" />
+            </button>
+            <button
+              onClick={startNewChat}
+              className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              <span>新对话</span>
+            </button>
+          </div>
           
-          <h1 className="text-lg font-semibold text-white">Project Yuzuriha</h1>
-          
-          <button
-            onClick={startNewChat}
-            className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
-            aria-label="新建对话"
-          >
-            <Plus size={20} className="text-gray-300" />
-          </button>
+          <div className="flex items-center space-x-2">
+            <div className="text-sm font-medium text-gray-900">Project Yuzuriha</div>
+            <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+          </div>
         </header>
 
-        {/* 消息区域 */}
-        <div 
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto p-4 pb-20"
-        >
+        {/* 主要内容区域 */}
+        <div className="flex-1 flex flex-col">
           {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center max-w-2xl mx-auto">
-              <div className="mb-8">
-                <h2 className="text-3xl font-bold mb-4 text-white">欢迎使用 Project Yuzuriha</h2>
-                <p className="text-gray-400 text-lg">一个拥有记忆能力的AI聊天助手</p>
-                <p className="text-gray-500 text-sm mt-2">开始对话，我会记住我们的交流内容</p>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
-                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                  <h3 className="font-semibold mb-2 text-white">🧠 持久记忆</h3>
-                  <p className="text-sm text-gray-400">记住过往对话，提供个性化体验</p>
+            /* 欢迎页面 */
+            <div className="flex-1 flex flex-col items-center justify-center px-4 py-8">
+              <div className="text-center max-w-4xl mx-auto">
+                <div className="mb-8">
+                  <h1 className="text-4xl font-bold text-gray-900 mb-4">
+                    你好，我是 Yuzuriha
+                  </h1>
+                  <p className="text-lg text-gray-600 mb-8">
+                    我是你的 AI 助手，具备长期记忆能力。我能帮助你处理各种任务，从创作内容到解答问题，再到编程协助。
+                  </p>
                 </div>
-                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                  <h3 className="font-semibold mb-2 text-white">🔍 智能检索</h3>
-                  <p className="text-sm text-gray-400">基于向量数据库的语义搜索</p>
+
+                {/* 示例提示卡片 */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl mx-auto mb-8">
+                  {examplePrompts.map((example, index) => {
+                    const IconComponent = example.icon
+                    return (
+                      <button
+                        key={index}
+                        onClick={() => handleExampleClick(example.prompt)}
+                        className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-all duration-200 text-left group"
+                      >
+                        <div className="flex items-start space-x-3">
+                          <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
+                            <IconComponent className="w-5 h-5 text-gray-600" />
+                          </div>
+                          <div className="flex-1">
+                            <h3 className="font-medium text-gray-900 mb-1">
+                              {example.title}
+                            </h3>
+                            <p className="text-sm text-gray-600">
+                              {example.description}
+                            </p>
+                          </div>
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
-                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                  <h3 className="font-semibold mb-2 text-white">💬 流畅对话</h3>
-                  <p className="text-sm text-gray-400">类似 ChatGPT 的用户体验</p>
-                </div>
-                <div className="p-4 bg-gray-800/50 rounded-lg border border-gray-700">
-                  <h3 className="font-semibold mb-2 text-white">📱 PWA 支持</h3>
-                  <p className="text-sm text-gray-400">可安装为原生应用</p>
+
+                {/* 特性说明 */}
+                <div className="text-sm text-gray-500">
+                  <p className="mb-2">🧠 具备长期记忆，能记住我们的对话历史</p>
+                  <p className="mb-2">💡 基于 GPT-4o 驱动，提供高质量回答</p>
+                  <p>⚡ 支持代码生成、创意写作、问题解答等多种任务</p>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {messages.map((message) => (
-                <ChatMessage key={message.id} message={message} />
-              ))}
-              {isLoading && (
-                <ChatMessage 
-                  message={{
-                    id: 'loading',
-                    role: 'assistant',
-                    content: '思考中...',
-                    timestamp: new Date().toISOString()
-                  }}
-                  isLoading
-                />
-              )}
-              <div ref={messagesEndRef} />
+            /* 聊天消息区域 */
+            <div 
+              ref={messagesContainerRef}
+              className="flex-1 overflow-y-auto px-4 py-6"
+            >
+              <div className="max-w-3xl mx-auto space-y-6">
+                {messages.map((message) => (
+                  <ChatMessage key={message.id} message={message} />
+                ))}
+                {isLoading && (
+                  <div className="flex justify-start">
+                    <div className="max-w-xs lg:max-w-2xl px-4 py-3 rounded-lg bg-gray-100">
+                      <div className="flex items-center space-x-2">
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
             </div>
           )}
-        </div>
 
-        {/* 输入区域 */}
-        <ChatInput 
-          onSendMessage={sendMessage} 
-          disabled={isLoading}
-        />
+          {/* 输入区域 */}
+          <div className="border-t border-gray-200 bg-white">
+            <div className="max-w-3xl mx-auto px-4 py-4">
+              <ChatInput
+                onSendMessage={sendMessage}
+                disabled={isLoading}
+              />
+              <div className="text-xs text-gray-500 text-center mt-2">
+                Yuzuriha 可能会出错。请核实重要信息。
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   )

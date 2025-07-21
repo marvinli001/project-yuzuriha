@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from typing import List, Dict, Any, Optional
 import logging
 from datetime import datetime
+from contextlib import asynccontextmanager
 
 from services.openai_service import OpenAIService
 from services.milvus_service import MilvusService
@@ -19,24 +20,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 创建 FastAPI 应用
-app = FastAPI(
-    title="Project Yuzuriha API",
-    description="AI聊天助手后端服务，具备增强记忆能力、情绪分析和时间感知",
-    version="2.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# CORS 中间件配置
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # 生产环境中应该指定具体域名
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # 全局服务实例
 openai_service = None
 milvus_service = None
@@ -45,9 +28,9 @@ time_service = None
 emotion_analyzer = None
 event_classifier = None
 
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化服务"""
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
     global openai_service, milvus_service, memory_service, time_service, emotion_analyzer, event_classifier
     
     try:
@@ -76,7 +59,32 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ 服务初始化失败: {e}")
         raise
+    
+    yield  # 应用运行期间
+    
+    # 清理资源（如果需要）
+    logger.info("应用关闭，清理资源...")
 
+# 创建 FastAPI 应用
+app = FastAPI(
+    title="Project Yuzuriha API",
+    description="AI聊天助手后端服务，具备增强记忆能力、情绪分析和时间感知",
+    version="2.1.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan  # 使用新的 lifespan 方式
+)
+
+# CORS 中间件配置
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 生产环境中应该指定具体域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# 其余代码保持不变...
 @app.post("/api/chat", response_model=ChatResponse)
 async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """增强的聊天处理"""
@@ -210,63 +218,7 @@ async def store_conversation_memories(
     except Exception as e:
         logger.error(f"❌ 存储对话记忆失败: {e}")
 
-@app.get("/api/supermemory/status")
-async def get_supermemory_status():
-    """获取SuperMemory状态"""
-    try:
-        client_info = memory_service.get_client_info()
-        return {
-            "supermemory_enabled": client_info['enabled'],
-            "client_available": client_info['client_available'],
-            "api_key_configured": client_info['api_key_configured'],
-            "version": "3.0.0a23",
-            "status": "pre-release"
-        }
-    except Exception as e:
-        logger.error(f"获取SuperMemory状态错误: {e}")
-        return {
-            "supermemory_enabled": False,
-            "client_available": False,
-            "api_key_configured": False,
-            "version": "unknown",
-            "status": "error",
-            "error": str(e)
-        }
-
-@app.post("/api/test/supermemory")
-async def test_supermemory_connection():
-    """测试SuperMemory连接"""
-    try:
-        if not memory_service.enabled:
-            return {
-                "success": False,
-                "message": "SuperMemory未启用",
-                "details": "请检查SUPERMEMORY_API_KEY环境变量"
-            }
-        
-        # 尝试添加一个测试记忆
-        test_content = f"测试记忆 - {time_service.get_formatted_time()}"
-        success = await memory_service.store_event_memory(
-            test_content,
-            event_type="connection_test"
-        )
-        
-        return {
-            "success": success,
-            "message": "SuperMemory连接测试完成",
-            "test_content": test_content
-        }
-        
-    except Exception as e:
-        logger.error(f"SuperMemory连接测试失败: {e}")
-        return {
-            "success": False,
-            "message": "SuperMemory连接测试失败",
-            "error": str(e)
-        }
-
-# ... (其他路由保持不变)
-
+# 其余路由保持不变...
 @app.get("/health", response_model=HealthResponse)
 async def enhanced_health_check():
     """增强的健康检查"""

@@ -37,44 +37,21 @@ class MilvusService:
             raise
 
     async def _create_collection(self):
-        """根据Zilliz Cloud文档创建集合"""
+        """根据Zilliz Cloud文档创建集合 - 使用正确的API方法"""
         try:
-            # 检查集合是否存在
-            if self.client.has_collection(collection_name=self.collection_name):
+            # 检查集合是否存在 - 使用正确的方法名
+            collections = self.client.list_collections()
+            if self.collection_name in collections:
                 logger.info(f"集合 {self.collection_name} 已存在")
                 return
 
-            # 创建集合架构
-            schema = self.client.create_schema(
-                auto_id=True,
-                enable_dynamic_field=True,
-            )
-
-            # 添加字段
-            schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True)
-            schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=65535)
-            schema.add_field(field_name="embedding", datatype=DataType.FLOAT_VECTOR, dim=self.embedding_dim)
-            schema.add_field(field_name="timestamp", datatype=DataType.INT64)
-            schema.add_field(field_name="user_id", datatype=DataType.VARCHAR, max_length=255)
-            schema.add_field(field_name="emotion_weight", datatype=DataType.DOUBLE)
-            schema.add_field(field_name="event_category", datatype=DataType.VARCHAR, max_length=100)
-            schema.add_field(field_name="interaction_type", datatype=DataType.VARCHAR, max_length=100)
-
-            # 准备索引参数
-            index_params = self.client.prepare_index_params()
-
-            # 为向量字段添加索引
-            index_params.add_index(
-                field_name="embedding",
-                index_type="AUTOINDEX",  # Zilliz Cloud推荐的自动索引
-                metric_type="COSINE"
-            )
-
-            # 创建集合
+            # 使用简化的集合创建方式
             self.client.create_collection(
                 collection_name=self.collection_name,
-                schema=schema,
-                index_params=index_params
+                dimension=self.embedding_dim,  # 向量维度
+                metric_type="COSINE",          # 相似度度量
+                auto_id=True,                  # 自动生成ID
+                consistency_level="Strong"     # 一致性级别
             )
 
             logger.info(f"成功创建集合: {self.collection_name}")
@@ -94,26 +71,28 @@ class MilvusService:
     ) -> bool:
         """存储记忆到Milvus"""
         try:
-            timestamp = int(time.time() * 1000)
+            current_timestamp = int(time.time() * 1000)  # 毫秒时间戳
             
+            # 准备要插入的数据
             data = [{
-                "text": text,
-                "embedding": embedding,
-                "timestamp": timestamp,
-                "user_id": user_id,
-                "emotion_weight": emotion_weight,
-                "event_category": event_category,
-                "interaction_type": interaction_type
+                "vector": embedding,              # 向量字段
+                "text": text,                    # 文本内容
+                "timestamp": current_timestamp,   # 时间戳
+                "user_id": user_id,              # 用户ID
+                "emotion_weight": emotion_weight, # 情绪权重
+                "event_category": event_category, # 事件类别
+                "interaction_type": interaction_type # 交互类型
             }]
-
+            
+            # 插入数据
             result = self.client.insert(
                 collection_name=self.collection_name,
                 data=data
             )
-
-            logger.info(f"成功存储记忆，插入了 {result['insert_count']} 条记录")
+            
+            logger.info(f"成功存储记忆: {text[:50]}...")
             return True
-
+            
         except Exception as e:
             logger.error(f"存储记忆失败: {e}")
             return False
@@ -122,7 +101,6 @@ class MilvusService:
         self,
         query_embedding: List[float],
         limit: int = 5,
-        user_id: str = "marvinli001",
         emotion_weight_threshold: float = 0.0
     ) -> List[Dict[str, Any]]:
         """搜索相似记忆"""
@@ -130,132 +108,88 @@ class MilvusService:
             # 构建搜索参数
             search_params = {
                 "metric_type": "COSINE",
-                "params": {
-                    "level": 1  # Zilliz Cloud AUTOINDEX 搜索参数
-                }
+                "params": {"nprobe": 10}
             }
-
-            # 构建过滤条件
-            filter_expr = f'user_id == "{user_id}"'
+            
+            # 构建过滤条件（如果需要）
+            filter_expr = None
             if emotion_weight_threshold > 0:
-                filter_expr += f' && emotion_weight >= {emotion_weight_threshold}'
-
+                filter_expr = f"emotion_weight >= {emotion_weight_threshold}"
+            
+            # 执行搜索
             results = self.client.search(
                 collection_name=self.collection_name,
                 data=[query_embedding],
-                anns_field="embedding",
+                anns_field="vector",
                 search_params=search_params,
                 limit=limit,
                 expr=filter_expr,
-                output_fields=[
-                    "text", "timestamp", "user_id", 
-                    "emotion_weight", "event_category", "interaction_type"
-                ]
+                output_fields=["text", "timestamp", "user_id", "emotion_weight", "event_category", "interaction_type"]
             )
-
+            
+            # 处理搜索结果
             memories = []
-            for result in results[0]:
-                # 设置相似度阈值
-                if result['distance'] <= 0.3:  # COSINE距离，越小越相似
-                    entity = result['entity']
-                    memories.append({
-                        "text": entity.get("text"),
-                        "score": 1 - result['distance'],  # 转换为相似度分数
-                        "timestamp": entity.get("timestamp"),
-                        "user_id": entity.get("user_id"),
-                        "emotion_weight": entity.get("emotion_weight"),
-                        "event_category": entity.get("event_category"),
-                        "interaction_type": entity.get("interaction_type")
-                    })
-
-            logger.info(f"找到 {len(memories)} 个相关记忆")
+            if results and len(results) > 0:
+                for hit in results[0]:  # results[0] 因为我们只查询了一个向量
+                    memory = {
+                        "text": hit.get("text", ""),
+                        "score": float(hit.distance) if hasattr(hit, 'distance') else 0.0,
+                        "timestamp": hit.get("timestamp", 0),
+                        "user_id": hit.get("user_id", ""),
+                        "emotion_weight": hit.get("emotion_weight", 0.0),
+                        "event_category": hit.get("event_category", "general"),
+                        "interaction_type": hit.get("interaction_type", "general")
+                    }
+                    memories.append(memory)
+            
+            logger.info(f"搜索到 {len(memories)} 条相关记忆")
             return memories
-
+            
         except Exception as e:
             logger.error(f"搜索记忆失败: {e}")
             return []
 
-    async def get_memories_by_category(
-        self,
-        category: str,
-        user_id: str = "marvinli001",
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """根据事件类别获取记忆"""
-        try:
-            filter_expr = f'user_id == "{user_id}" && event_category == "{category}"'
-            
-            results = self.client.query(
-                collection_name=self.collection_name,
-                expr=filter_expr,
-                output_fields=[
-                    "text", "timestamp", "emotion_weight", 
-                    "event_category", "interaction_type"
-                ],
-                limit=limit
-            )
-
-            memories = []
-            for result in results:
-                memories.append({
-                    "text": result.get("text"),
-                    "timestamp": result.get("timestamp"),
-                    "emotion_weight": result.get("emotion_weight"),
-                    "event_category": result.get("event_category"),
-                    "interaction_type": result.get("interaction_type")
-                })
-
-            return memories
-
-        except Exception as e:
-            logger.error(f"按类别获取记忆失败: {e}")
-            return []
-
-    async def clear_memories(self, user_id: str = "marvinli001") -> bool:
-        """清空用户的所有记忆"""
-        try:
-            filter_expr = f'user_id == "{user_id}"'
-            
-            self.client.delete(
-                collection_name=self.collection_name,
-                expr=filter_expr
-            )
-
-            logger.info(f"成功清空用户 {user_id} 的记忆")
-            return True
-
-        except Exception as e:
-            logger.error(f"清空记忆失败: {e}")
-            return False
-
     async def get_memory_stats(self, user_id: str = "marvinli001") -> Dict[str, Any]:
         """获取记忆统计信息"""
         try:
-            # 获取总数
-            total_count = self.client.query(
+            # 获取集合统计信息
+            stats = self.client.get_collection_stats(collection_name=self.collection_name)
+            
+            # 查询用户的记忆数量
+            user_memories = self.client.query(
                 collection_name=self.collection_name,
                 expr=f'user_id == "{user_id}"',
-                output_fields=["count(*)"]
+                output_fields=["event_category"],
+                limit=1000  # 限制查询数量
             )
-
-            # 获取各类别统计
-            categories = ["question", "task", "conversation", "information", "creative", "analysis", "emotional"]
-            category_stats = {}
             
-            for category in categories:
-                count = self.client.query(
-                    collection_name=self.collection_name,
-                    expr=f'user_id == "{user_id}" && event_category == "{category}"',
-                    output_fields=["count(*)"]
-                )
-                category_stats[category] = len(count)
-
+            # 统计类别分布
+            category_distribution = {}
+            for memory in user_memories:
+                category = memory.get("event_category", "unknown")
+                category_distribution[category] = category_distribution.get(category, 0) + 1
+            
             return {
-                "total_memories": len(total_count),
-                "category_distribution": category_stats,
-                "user_id": user_id
+                "total_memories": stats.get("row_count", 0),
+                "user_memories": len(user_memories),
+                "category_distribution": category_distribution,
+                "collection_name": self.collection_name
             }
-
+            
         except Exception as e:
             logger.error(f"获取记忆统计失败: {e}")
-            return {"total_memories": 0, "category_distribution": {}, "user_id": user_id}
+            return {
+                "total_memories": 0,
+                "user_memories": 0,
+                "category_distribution": {},
+                "error": str(e)
+            }
+
+    def get_client_info(self) -> Dict[str, Any]:
+        """获取客户端信息"""
+        return {
+            "connected": self.client is not None,
+            "collection_name": self.collection_name,
+            "embedding_dim": self.embedding_dim,
+            "uri_configured": bool(self.uri)
+        }

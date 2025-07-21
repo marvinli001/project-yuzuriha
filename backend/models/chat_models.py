@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Dict, Any
 
 class Message(BaseModel):
@@ -16,6 +16,9 @@ class ChatResponse(BaseModel):
     memories: Optional[List[Dict[str, Any]]] = None
 
 class HealthResponse(BaseModel):
+    # 修复 model_info 字段冲突
+    model_config = ConfigDict(protected_namespaces=())
+    
     status: str  # 'healthy' 或 'unhealthy'
     timestamp: str
     services: Dict[str, bool]

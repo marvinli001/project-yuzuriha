@@ -1,14 +1,43 @@
+# Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
+
+# Configuration
 python-dotenv==1.0.0
+
+# HTTP client
 httpx==0.25.0
+
+# AI services
 openai==1.45.0
+
+# Data validation
 pydantic==2.5.0
-pymilvus==2.3.4
+
+# Vector database - 兼容版本
+pymilvus==2.3.1
+
+# Numeric computation
 numpy==1.24.3
+
+# File handling
 aiofiles==23.2.1
+
+# Time handling
 pytz==2023.3
-supermemory==3.0.0a23
+
+# SuperMemory - AI Memory API
+supermemory
+
+# Text analysis
 textstat==0.7.3
 vaderSentiment==3.3.2
+
+# 兼容的依赖版本
+environs==9.5.0
+marshmallow>=3.13.0,<4.0.0
+
+# 确保其他依赖兼容
+packaging>=21.0
+typing-extensions>=4.0.0
