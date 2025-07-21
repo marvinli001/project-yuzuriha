@@ -55,48 +55,56 @@ async def lifespan(app: FastAPI):
         logger.info("✓ 情绪分析和事件分类服务初始化成功")
         
         logger.info("🚀 所有增强服务初始化完成")
+        yield
         
     except Exception as e:
-        logger.error(f"❌ 服务初始化失败: {e}")
+        logger.error(f"服务初始化失败: {e}")
         raise
-    
-    yield  # 应用运行期间
-    
-    # 清理资源（如果需要）
-    logger.info("应用关闭，清理资源...")
+    finally:
+        logger.info("应用关闭，清理资源...")
 
-# 创建 FastAPI 应用
+# 创建FastAPI应用
 app = FastAPI(
-    title="Project Yuzuriha API",
-    description="AI聊天助手后端服务，具备增强记忆能力、情绪分析和时间感知",
-    version="2.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan  # 使用新的 lifespan 方式
+    title="Project Yuzuriha - Enhanced AI Chat API",
+    description="基于OpenAI、Milvus和SuperMemory的增强AI聊天API",
+    version="2.0.0",
+    lifespan=lifespan
 )
 
-# CORS 中间件配置
+# 添加CORS中间件
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境中应该指定具体域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 其余代码保持不变...
 @app.post("/api/chat", response_model=ChatResponse)
 async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks):
-    """增强的聊天处理"""
+    """增强的聊天处理 - 添加更好的错误处理"""
     try:
         logger.info(f"收到聊天请求: {request.message[:50]}...")
         
+        # 验证输入
+        if not request.message or not request.message.strip():
+            raise HTTPException(status_code=400, detail="消息内容不能为空")
+        
         # 1. 创建查询嵌入
-        query_embedding = await openai_service.create_embedding(request.message)
+        try:
+            query_embedding = await openai_service.create_embedding(request.message)
+        except Exception as e:
+            logger.error(f"创建嵌入失败: {e}")
+            query_embedding = [0.0] * 1536  # 使用默认嵌入
         
         # 2. 分析用户消息
-        user_emotion = emotion_analyzer.analyze_emotion(request.message)
-        user_category, user_confidence = event_classifier.classify_event(request.message)
+        try:
+            user_emotion = emotion_analyzer.analyze_emotion(request.message)
+            user_category, user_confidence = event_classifier.classify_event(request.message)
+        except Exception as e:
+            logger.error(f"情绪分析失败: {e}")
+            user_emotion = {'emotion_weight': 0.5}
+            user_category, user_confidence = 'general', 0.5
         
         # 3. 从SuperMemory检索相关记忆
         supermemory_memories = []
@@ -107,46 +115,69 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
             logger.info(f"从SuperMemory检索到 {len(supermemory_memories)} 个记忆")
         except Exception as e:
             logger.warning(f"SuperMemory检索失败，继续使用Milvus: {e}")
-        
+
         # 4. 从Milvus搜索向量相似的记忆
-        milvus_memories = await milvus_service.search_memories(
-            query_embedding, 
-            limit=3,
-            emotion_weight_threshold=0.3 if user_emotion['emotion_weight'] > 0.5 else 0.0
-        )
+        milvus_memories = []
+        try:
+            milvus_memories = await milvus_service.search_memories(
+                query_embedding, 
+                limit=3,
+                emotion_weight_threshold=0.3 if user_emotion.get('emotion_weight', 0) > 0.5 else 0.0
+            )
+            logger.info(f"从Milvus检索到 {len(milvus_memories)} 个记忆")
+        except Exception as e:
+            logger.error(f"Milvus搜索失败: {e}")
         
         # 5. 合并记忆
         all_memories = supermemory_memories + milvus_memories
         
         # 6. 转换历史消息格式
-        conversation_history = [
-            {'role': msg.role, 'content': msg.content} 
-            for msg in request.history
-        ]
+        conversation_history = []
+        try:
+            conversation_history = [
+                {'role': msg.role, 'content': msg.content} 
+                for msg in (request.history or [])
+                if msg.content and msg.content.strip()
+            ]
+        except Exception as e:
+            logger.error(f"处理历史消息失败: {e}")
         
         # 7. 生成AI回复
-        response = await openai_service.generate_response(
-            request.message,
-            memories=all_memories,
-            conversation_history=conversation_history
-        )
+        try:
+            response = await openai_service.generate_response(
+                request.message,
+                memories=all_memories,
+                conversation_history=conversation_history
+            )
+            
+            # 验证响应
+            if not response or not response.strip():
+                response = "抱歉，我现在无法生成回复。请稍后再试。"
+                
+        except Exception as e:
+            logger.error(f"生成回复失败: {e}")
+            response = "抱歉，发送消息时出现错误。请检查网络连接并重试。"
         
         # 8. 后台存储记忆
-        background_tasks.add_task(
-            store_conversation_memories,
-            request.message,
-            response,
-            query_embedding,
-            user_emotion,
-            user_category,
-            user_confidence
-        )
+        try:
+            background_tasks.add_task(
+                store_conversation_memories,
+                request.message,
+                response,
+                query_embedding,
+                user_emotion,
+                user_category,
+                user_confidence
+            )
+        except Exception as e:
+            logger.error(f"添加后台任务失败: {e}")
         
         logger.info("✓ 聊天请求处理成功")
         
-        return ChatResponse(
-            response=response,
-            memories=[
+        # 构建返回的记忆列表
+        response_memories = []
+        try:
+            response_memories = [
                 {
                     "text": m.get("content", ""),
                     "score": m.get("relevance_score", 0.0),
@@ -161,13 +192,24 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
                     "timestamp": m.get("timestamp", 0)
                 } for m in milvus_memories
             ]
+        except Exception as e:
+            logger.error(f"构建记忆响应失败: {e}")
+            response_memories = []
+        
+        return ChatResponse(
+            response=response,
+            memories=response_memories
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ 聊天处理错误: {e}")
-        raise HTTPException(status_code=500, detail=f"处理聊天请求时发生错误: {str(e)}")
+        return ChatResponse(
+            response="抱歉，处理您的请求时出现了问题。请稍后再试。",
+            memories=[]
+        )
 
-# 在主程序的存储对话记忆函数中修复调用方式
 async def store_conversation_memories(
     user_message: str,
     ai_response: str,
@@ -176,39 +218,61 @@ async def store_conversation_memories(
     user_category: str,
     user_confidence: float
 ):
-    """后台任务：存储对话记忆 - 修复存储错误"""
+    """后台任务：存储对话记忆 - 改进错误处理"""
     try:
-        # 1. 存储到SuperMemory - 修复调用方式
-        supermemory_success = await memory_service.store_conversation_memory(
-            user_message, ai_response
-        )
+        # 1. 存储到SuperMemory
+        supermemory_success = False
+        try:
+            supermemory_success = await memory_service.store_conversation_memory(
+                user_message, ai_response
+            )
+        except Exception as e:
+            logger.error(f"SuperMemory存储失败: {e}")
+        
         logger.info(f"SuperMemory存储: {'成功' if supermemory_success else '失败'}")
         
         # 2. 分析AI回复
-        ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
-        ai_category, ai_confidence = event_classifier.classify_event(ai_response)
+        try:
+            ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
+            ai_category, ai_confidence = event_classifier.classify_event(ai_response)
+        except Exception as e:
+            logger.error(f"AI回复分析失败: {e}")
+            ai_emotion = {'emotion_weight': 0.5}
+            ai_category, ai_confidence = 'general', 0.5
         
         # 3. 确定交互类型
-        interaction_type = memory_service._determine_interaction_type(user_category, ai_category)
+        try:
+            interaction_type = memory_service._determine_interaction_type(user_category, ai_category)
+        except Exception as e:
+            logger.error(f"确定交互类型失败: {e}")
+            interaction_type = 'general_conversation'
         
         # 4. 存储用户消息到Milvus
-        milvus_user_success = await milvus_service.store_memory(
-            text=f"用户: {user_message}",
-            embedding=query_embedding,
-            emotion_weight=user_emotion['emotion_weight'],
-            event_category=user_category,
-            interaction_type=interaction_type
-        )
+        milvus_user_success = False
+        try:
+            milvus_user_success = await milvus_service.store_memory(
+                text=f"用户: {user_message}",
+                embedding=query_embedding,
+                emotion_weight=user_emotion.get('emotion_weight', 0.5),
+                event_category=user_category,
+                interaction_type=interaction_type
+            )
+        except Exception as e:
+            logger.error(f"Milvus用户消息存储失败: {e}")
         
         # 5. 为AI回复创建嵌入并存储
-        ai_embedding = await openai_service.create_embedding(ai_response)
-        milvus_ai_success = await milvus_service.store_memory(
-            text=f"助手: {ai_response}",
-            embedding=ai_embedding,
-            emotion_weight=ai_emotion['emotion_weight'],
-            event_category=ai_category,
-            interaction_type=interaction_type
-        )
+        milvus_ai_success = False
+        try:
+            ai_embedding = await openai_service.create_embedding(ai_response)
+            milvus_ai_success = await milvus_service.store_memory(
+                text=f"助手: {ai_response}",
+                embedding=ai_embedding,
+                emotion_weight=ai_emotion.get('emotion_weight', 0.5),
+                event_category=ai_category,
+                interaction_type=interaction_type
+            )
+        except Exception as e:
+            logger.error(f"Milvus AI回复存储失败: {e}")
         
         logger.info(f"✓ 记忆存储完成 - SuperMemory: {'✓' if supermemory_success else '✗'}, Milvus用户: {'✓' if milvus_user_success else '✗'}, MilvusAI: {'✓' if milvus_ai_success else '✗'}")
         
@@ -244,41 +308,41 @@ async def enhanced_health_check():
         
         return HealthResponse(
             status=overall_status,
-            timestamp=time_info['current_time'],
+            timestamp=datetime.now().isoformat(),
             services=services_status,
+            time_info=time_info,
             model_info=model_info,
-            timezone=time_info['timezone']
+            supermemory_info=supermemory_info
         )
     except Exception as e:
-        logger.error(f"健康检查错误: {e}")
-        raise HTTPException(status_code=500, detail=f"健康检查失败: {str(e)}")
+        logger.error(f"健康检查失败: {e}")
+        return HealthResponse(
+            status="error",
+            timestamp=datetime.now().isoformat(),
+            services={},
+            time_info={},
+            model_info={},
+            supermemory_info={}
+        )
+
+@app.get("/api/memories/stats", response_model=MemoryStatsResponse)
+async def get_memory_stats():
+    """获取记忆统计"""
+    try:
+        milvus_stats = await milvus_service.get_memory_stats()
+        return MemoryStatsResponse(**milvus_stats)
+    except Exception as e:
+        logger.error(f"获取记忆统计失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取记忆统计失败: {str(e)}")
 
 @app.get("/")
 async def root():
     """根路径"""
-    time_info = time_service.get_time_context()
-    supermemory_info = memory_service.get_client_info()
-    
     return {
-        "message": "Project Yuzuriha Enhanced API",
-        "version": "2.1.0",
+        "message": "Project Yuzuriha - Enhanced AI Chat API",
+        "version": "2.0.0",
         "status": "running",
-        "current_time": time_info['current_time'],
-        "supermemory": {
-            "version": "3.0.0a23",
-            "status": "pre-release",
-            "enabled": supermemory_info['enabled'],
-            "client_available": supermemory_info['client_available']
-        },
-        "features": [
-            "增强记忆系统",
-            "SuperMemory MCP集成 (Pre-release)",
-            "情绪分析",
-            "事件分类",
-            "时间感知",
-            "多源记忆检索",
-            "Zilliz Cloud Milvus"
-        ]
+        "docs": "/docs"
     }
 
 if __name__ == "__main__":
