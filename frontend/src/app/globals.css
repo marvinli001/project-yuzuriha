@@ -82,3 +82,30 @@
 .btn-hover:hover {
   @apply transform -translate-y-0.5;
 }
+
+/* 统一颜色变量 */
+:root {
+  --chat-bg: #ffffff;
+  --chat-sidebar: #2d3748;
+  --chat-input: #ffffff;
+  --chat-user: #4299e1;
+  --chat-assistant: #2d3748;
+  --text-primary: #000000;
+  --text-secondary: #4a5568;
+  --border-color: #e2e8f0;
+}
+
+/* 统一文本颜色 */
+.chat-message-user,
+.chat-message-assistant {
+  color: var(--text-primary) !important;
+}
+
+/* 确保所有消息文本都是黑色 */
+.prose.prose-invert {
+  color: var(--text-primary) !important;
+}
+
+.prose.prose-invert .whitespace-pre-wrap {
+  color: var(--text-primary) !important;
+}

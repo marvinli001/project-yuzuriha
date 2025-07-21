@@ -47,7 +47,7 @@ export default function ChatMessage({ message, isLoading = false }: ChatMessageP
       <div className="flex-1 min-w-0">
         {/* 消息头部 */}
         <div className="flex items-center gap-3 mb-2">
-          <span className="font-medium text-sm text-white">
+          <span className="font-medium text-sm text-black">
             {isUser ? 'You' : 'Yuzuriha'}
           </span>
           <span className="text-xs text-gray-500">
@@ -76,7 +76,7 @@ export default function ChatMessage({ message, isLoading = false }: ChatMessageP
               <span className="text-sm text-gray-400">正在生成回复...</span>
             </div>
           ) : (
-            <div className="whitespace-pre-wrap break-words text-gray-100 leading-relaxed">
+            <div className="whitespace-pre-wrap break-words text-black leading-relaxed">
               {message.content}
             </div>
           )}

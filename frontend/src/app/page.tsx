@@ -16,34 +16,6 @@ export default function ChatPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
 
-  // 示例提示
-  const examplePrompts = [
-    {
-      icon: MessageCircle,
-      title: "创建内容",
-      description: "帮我写一篇关于人工智能的文章",
-      prompt: "帮我写一篇关于人工智能发展历程的文章，包含关键里程碑"
-    },
-    {
-      icon: Lightbulb,
-      title: "解答问题",
-      description: "解释量子计算的基本原理",
-      prompt: "请用简单易懂的语言解释量子计算的基本原理和应用"
-    },
-    {
-      icon: Code,
-      title: "编程帮助",
-      description: "帮我写一个Python函数",
-      prompt: "帮我写一个Python函数来处理JSON数据并进行数据清洗"
-    },
-    {
-      icon: Zap,
-      title: "头脑风暴",
-      description: "为我的项目提供创新想法",
-      prompt: "为一个环保主题的移动应用提供5个创新功能想法"
-    }
-  ]
-
   // 初始化聊天历史
   useEffect(() => {
     const savedHistory = localStorage.getItem('yuzuriha_chat_history')
@@ -228,44 +200,6 @@ export default function ChatPage() {
                   <h1 className="text-4xl font-bold text-gray-900 mb-4">
                     你好，我是 Yuzuriha
                   </h1>
-                  <p className="text-lg text-gray-600 mb-8">
-                    我是你的 AI 助手，具备长期记忆能力。我能帮助你处理各种任务，从创作内容到解答问题，再到编程协助。
-                  </p>
-                </div>
-
-                {/* 示例提示卡片 */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-3xl mx-auto mb-8">
-                  {examplePrompts.map((example, index) => {
-                    const IconComponent = example.icon
-                    return (
-                      <button
-                        key={index}
-                        onClick={() => handleExampleClick(example.prompt)}
-                        className="p-4 border border-gray-200 rounded-lg hover:border-gray-300 hover:bg-gray-50 transition-all duration-200 text-left group"
-                      >
-                        <div className="flex items-start space-x-3">
-                          <div className="p-2 bg-gray-100 rounded-lg group-hover:bg-gray-200 transition-colors">
-                            <IconComponent className="w-5 h-5 text-gray-600" />
-                          </div>
-                          <div className="flex-1">
-                            <h3 className="font-medium text-gray-900 mb-1">
-                              {example.title}
-                            </h3>
-                            <p className="text-sm text-gray-600">
-                              {example.description}
-                            </p>
-                          </div>
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-
-                {/* 特性说明 */}
-                <div className="text-sm text-gray-500">
-                  <p className="mb-2">🧠 具备长期记忆，能记住我们的对话历史</p>
-                  <p className="mb-2">💡 基于 GPT-4o 驱动，提供高质量回答</p>
-                  <p>⚡ 支持代码生成、创意写作、问题解答等多种任务</p>
                 </div>
               </div>
             </div>

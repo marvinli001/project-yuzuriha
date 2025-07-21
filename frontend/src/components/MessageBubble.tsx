@@ -21,9 +21,7 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
       </div>
       
       <div className="flex-1 space-y-2">
-        <div className={`prose prose-invert max-w-none ${
-          isUser ? 'text-gray-100' : 'text-gray-200'
-        }`}>
+        <div className={`prose max-w-none text-black`}>
           <div className="whitespace-pre-wrap break-words">
             {message.content}
           </div>
