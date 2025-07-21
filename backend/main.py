@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Project Yuzuriha API",
     description="AI聊天助手后端服务，具备增强记忆能力、情绪分析和时间感知",
-    version="2.0.0",
+    version="2.1.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -62,7 +62,7 @@ async def startup_event():
         logger.info("✓ Milvus 服务初始化成功")
         
         memory_service = MemoryService()
-        logger.info("✓ 记忆服务初始化成功")
+        logger.info(f"✓ SuperMemory 服务初始化{'成功' if memory_service.enabled else '失败（将使用模拟模式）'}")
         
         time_service = TimeService()
         logger.info("✓ 时间服务初始化成功")
@@ -91,9 +91,14 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
         user_category, user_confidence = event_classifier.classify_event(request.message)
         
         # 3. 从SuperMemory检索相关记忆
-        supermemory_memories = await memory_service.retrieve_relevant_memories(
-            request.message, limit=3
-        )
+        supermemory_memories = []
+        try:
+            supermemory_memories = await memory_service.retrieve_relevant_memories(
+                request.message, limit=3
+            )
+            logger.info(f"从SuperMemory检索到 {len(supermemory_memories)} 个记忆")
+        except Exception as e:
+            logger.warning(f"SuperMemory检索失败，继续使用Milvus: {e}")
         
         # 4. 从Milvus搜索向量相似的记忆
         milvus_memories = await milvus_service.search_memories(
@@ -137,13 +142,15 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
                 {
                     "text": m.get("content", ""),
                     "score": m.get("relevance_score", 0.0),
-                    "source": "supermemory"
+                    "source": "supermemory",
+                    "timestamp": m.get("timestamp", 0)
                 } for m in supermemory_memories
             ] + [
                 {
                     "text": m.get("text", ""),
                     "score": m.get("score", 0.0),
-                    "source": "milvus"
+                    "source": "milvus",
+                    "timestamp": m.get("timestamp", 0)
                 } for m in milvus_memories
             ]
         )
@@ -162,8 +169,15 @@ async def store_conversation_memories(
 ):
     """后台任务：存储对话记忆"""
     try:
-        # 1. 存储到SuperMemory
-        await memory_service.store_conversation_memory(user_message, ai_response)
+        # 1. 存储到SuperMemory（如果可用）
+        supermemory_success = False
+        try:
+            supermemory_success = await memory_service.store_conversation_memory(
+                user_message, ai_response
+            )
+            logger.info(f"SuperMemory存储: {'成功' if supermemory_success else '失败'}")
+        except Exception as e:
+            logger.warning(f"SuperMemory存储失败，继续使用Milvus: {e}")
         
         # 2. 分析AI回复
         ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
@@ -173,7 +187,7 @@ async def store_conversation_memories(
         interaction_type = memory_service._determine_interaction_type(user_category, ai_category)
         
         # 4. 存储用户消息到Milvus
-        await milvus_service.store_memory(
+        milvus_user_success = await milvus_service.store_memory(
             text=f"用户: {user_message}",
             embedding=query_embedding,
             emotion_weight=user_emotion['emotion_weight'],
@@ -183,7 +197,7 @@ async def store_conversation_memories(
         
         # 5. 为AI回复创建嵌入并存储
         ai_embedding = await openai_service.create_embedding(ai_response)
-        await milvus_service.store_memory(
+        milvus_ai_success = await milvus_service.store_memory(
             text=f"助手: {ai_response}",
             embedding=ai_embedding,
             emotion_weight=ai_emotion['emotion_weight'],
@@ -191,57 +205,67 @@ async def store_conversation_memories(
             interaction_type=interaction_type
         )
         
-        logger.info("✓ 对话记忆存储完成")
+        logger.info(f"✓ 记忆存储完成 - SuperMemory: {'✓' if supermemory_success else '✗'}, Milvus用户: {'✓' if milvus_user_success else '✗'}, MilvusAI: {'✓' if milvus_ai_success else '✗'}")
         
     except Exception as e:
         logger.error(f"❌ 存储对话记忆失败: {e}")
 
-@app.get("/api/memories/stats", response_model=MemoryStatsResponse)
-async def get_memory_statistics(user_id: str = "marvinli001"):
-    """获取记忆统计信息"""
+@app.get("/api/supermemory/status")
+async def get_supermemory_status():
+    """获取SuperMemory状态"""
     try:
-        stats = await milvus_service.get_memory_stats(user_id)
-        time_info = time_service.get_time_context()
-        
-        return MemoryStatsResponse(
-            total_memories=stats['total_memories'],
-            category_distribution=stats['category_distribution'],
-            user_id=stats['user_id'],
-            generated_at=time_info['current_time']
-        )
-    except Exception as e:
-        logger.error(f"获取记忆统计错误: {e}")
-        raise HTTPException(status_code=500, detail=f"获取统计信息时发生错误: {str(e)}")
-
-@app.get("/api/memories/category/{category}")
-async def get_memories_by_category(category: str, user_id: str = "marvinli001", limit: int = 10):
-    """根据类别获取记忆"""
-    try:
-        memories = await milvus_service.get_memories_by_category(category, user_id, limit)
-        return {"memories": memories, "count": len(memories), "category": category}
-    except Exception as e:
-        logger.error(f"按类别获取记忆错误: {e}")
-        raise HTTPException(status_code=500, detail=f"获取记忆时发生错误: {str(e)}")
-
-@app.delete("/api/memories/clear")
-async def clear_all_memories(user_id: str = "marvinli001"):
-    """清空所有记忆"""
-    try:
-        # 清空Milvus记忆
-        milvus_success = await milvus_service.clear_memories(user_id)
-        
-        # 清空SuperMemory记忆
-        supermemory_success = await memory_service.clear_all_memories(user_id)
-        
+        client_info = memory_service.get_client_info()
         return {
-            "success": milvus_success and supermemory_success,
-            "message": "记忆已清空",
-            "milvus_cleared": milvus_success,
-            "supermemory_cleared": supermemory_success
+            "supermemory_enabled": client_info['enabled'],
+            "client_available": client_info['client_available'],
+            "api_key_configured": client_info['api_key_configured'],
+            "version": "3.0.0a23",
+            "status": "pre-release"
         }
     except Exception as e:
-        logger.error(f"清空记忆错误: {e}")
-        raise HTTPException(status_code=500, detail=f"清空记忆时发生错误: {str(e)}")
+        logger.error(f"获取SuperMemory状态错误: {e}")
+        return {
+            "supermemory_enabled": False,
+            "client_available": False,
+            "api_key_configured": False,
+            "version": "unknown",
+            "status": "error",
+            "error": str(e)
+        }
+
+@app.post("/api/test/supermemory")
+async def test_supermemory_connection():
+    """测试SuperMemory连接"""
+    try:
+        if not memory_service.enabled:
+            return {
+                "success": False,
+                "message": "SuperMemory未启用",
+                "details": "请检查SUPERMEMORY_API_KEY环境变量"
+            }
+        
+        # 尝试添加一个测试记忆
+        test_content = f"测试记忆 - {time_service.get_formatted_time()}"
+        success = await memory_service.store_event_memory(
+            test_content,
+            event_type="connection_test"
+        )
+        
+        return {
+            "success": success,
+            "message": "SuperMemory连接测试完成",
+            "test_content": test_content
+        }
+        
+    except Exception as e:
+        logger.error(f"SuperMemory连接测试失败: {e}")
+        return {
+            "success": False,
+            "message": "SuperMemory连接测试失败",
+            "error": str(e)
+        }
+
+# ... (其他路由保持不变)
 
 @app.get("/health", response_model=HealthResponse)
 async def enhanced_health_check():
@@ -249,17 +273,25 @@ async def enhanced_health_check():
     try:
         time_info = time_service.get_time_context()
         model_info = openai_service.get_model_info()
+        supermemory_info = memory_service.get_client_info()
         
         services_status = {
             "openai": openai_service is not None,
             "milvus": milvus_service is not None and milvus_service.client is not None,
             "supermemory": memory_service is not None and memory_service.enabled,
+            "supermemory_client": supermemory_info['client_available'],
             "time_service": time_service is not None,
             "emotion_analyzer": emotion_analyzer is not None,
             "event_classifier": event_classifier is not None
         }
         
-        overall_status = "healthy" if all(services_status.values()) else "unhealthy"
+        overall_status = "healthy" if all([
+            services_status["openai"],
+            services_status["milvus"],
+            services_status["time_service"],
+            services_status["emotion_analyzer"],
+            services_status["event_classifier"]
+        ]) else "unhealthy"
         
         return HealthResponse(
             status=overall_status,
@@ -276,17 +308,27 @@ async def enhanced_health_check():
 async def root():
     """根路径"""
     time_info = time_service.get_time_context()
+    supermemory_info = memory_service.get_client_info()
+    
     return {
         "message": "Project Yuzuriha Enhanced API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "status": "running",
         "current_time": time_info['current_time'],
+        "supermemory": {
+            "version": "3.0.0a23",
+            "status": "pre-release",
+            "enabled": supermemory_info['enabled'],
+            "client_available": supermemory_info['client_available']
+        },
         "features": [
             "增强记忆系统",
+            "SuperMemory MCP集成 (Pre-release)",
             "情绪分析",
             "事件分类",
             "时间感知",
-            "多源记忆检索"
+            "多源记忆检索",
+            "Zilliz Cloud Milvus"
         ]
     }
 

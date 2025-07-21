@@ -9,6 +9,6 @@ pymilvus==2.3.4
 numpy==1.24.3
 aiofiles==23.2.1
 pytz==2023.3
-supermemory==0.1.0
+supermemory==3.0.0a23
 textstat==0.7.3
 vaderSentiment==3.3.2
