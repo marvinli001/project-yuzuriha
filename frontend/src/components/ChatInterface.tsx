@@ -2,8 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Message } from '@/types/chat'
-import MessageBubble from './MessageBubble'
-import MessageInput from './MessageInput'
+import MessageBubble from './MessageBubble'  // 确保这个路径正确
+import MessageInput from './MessageInput'    // 确保这个路径正确
 import { Menu } from 'lucide-react'
 
 interface ChatInterfaceProps {
