@@ -409,6 +409,88 @@ async def root():
         ]
     }
 
+@app.post("/upload", response_model=FileUploadResponse)
+async def upload_files(files: List[UploadFile] = File(...)):
+    """文件上传接口"""
+    try:
+        uploaded_files = []
+        
+        for file in files:
+            # 验证文件类型
+            file_type = get_file_type(file.filename)
+            if file_type == 'other':
+                raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file.filename}")
+            
+            # 生成唯一文件名
+            file_id = str(uuid.uuid4())
+            file_extension = file.filename.split('.')[-1]
+            unique_filename = f"{file_id}.{file_extension}"
+            file_path = os.path.join(UPLOAD_DIR, unique_filename)
+            
+            # 保存文件
+            async with aiofiles.open(file_path, 'wb') as out_file:
+                content = await file.read()
+                await out_file.write(content)
+            
+            # 创建文件记录
+            uploaded_file = UploadedFile(
+                id=file_id,
+                filename=file.filename,
+                type=file_type,
+                size=len(content),
+                path=file_path
+            )
+            uploaded_files.append(uploaded_file)
+            
+            logger.info(f"文件上传成功: {file.filename} -> {unique_filename}")
+        
+        return FileUploadResponse(files=uploaded_files)
+        
+    except Exception as e:
+        logger.error(f"文件上传失败: {e}")
+        raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
+
+@app.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe_audio(file: UploadFile = File(...)):
+    """音频转文本接口"""
+    try:
+        # 验证是否为音频文件
+        file_type = get_file_type(file.filename)
+        if file_type != 'audio':
+            raise HTTPException(status_code=400, detail="仅支持音频文件转录")
+        
+        # 创建临时文件
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as tmp_file:
+            content = await file.read()
+            tmp_file.write(content)
+            tmp_file.flush()
+            
+            # 调用 OpenAI Whisper API
+            with open(tmp_file.name, 'rb') as audio_file:
+                transcript = await openai_service.transcribe_audio(audio_file)
+            
+            # 清理临时文件
+            os.unlink(tmp_file.name)
+            
+            logger.info(f"音频转录成功: {file.filename}")
+            
+            return TranscriptionResponse(
+                text=transcript,
+                success=True
+            )
+        
+    except Exception as e:
+        # 确保临时文件被删除
+        if 'tmp_file' in locals():
+            try:
+                os.unlink(tmp_file.name)
+            except:
+                pass
+        
+        logger.error(f"语音转文本失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
