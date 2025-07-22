@@ -5,7 +5,8 @@ import { Message, ChatHistory } from '@/types/chat'
 import Sidebar from '@/components/Sidebar'
 import ChatMessage from '@/components/ChatMessage'
 import ChatInput from '@/components/ChatInput'
-import { Menu, Plus, MessageCircle, Lightbulb, Code, Zap } from 'lucide-react'
+import { Menu, Plus} from 'lucide-react'
+import { UploadedFile } from '../utils/fileUtils'
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -99,14 +100,16 @@ export default function ChatPage() {
     }
   }, [currentChatId, startNewChat])
 
-  const sendMessage = useCallback(async (content: string) => {
-    if (!content.trim() || isLoading) return
+  // 修改发送消息函数支持文件 - 只修改这个函数
+  const sendMessage = useCallback(async (content: string, files?: UploadedFile[]) => {
+    if ((!content.trim() && !files?.length) || isLoading) return
 
+    // 创建用户消息 - 使用现有的 Message 类型
     const userMessage: Message = {
-      id: `msg_${Date.now()}`,
+      id: Date.now().toString(),
       role: 'user',
-      content: content.trim(),
-      timestamp: new Date().toISOString()
+      content: files?.length ? `${content}\n\n附件: ${files.map(f => f.filename).join(', ')}` : content,
+      timestamp: new Date().toISOString() // 使用 string 类型
     }
 
     const updatedMessages = [...messages, userMessage]
@@ -114,76 +117,74 @@ export default function ChatPage() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: content.trim(),
+          message: content,
           history: messages.map(msg => ({
             role: msg.role,
             content: msg.content
-          }))
+          })),
+          files: files || [] // 发送文件信息
         }),
       })
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        throw new Error('Failed to send message')
       }
 
       const data = await response.json()
       
       const assistantMessage: Message = {
-        id: `msg_${Date.now() + 1}`,
+        id: (Date.now() + 1).toString(),
         role: 'assistant',
         content: data.response,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(), // 使用 string 类型
       }
 
       const finalMessages = [...updatedMessages, assistantMessage]
       setMessages(finalMessages)
-      saveCurrentChat(finalMessages)
+      saveCurrentChat && saveCurrentChat(finalMessages)
 
     } catch (error) {
       console.error('Error sending message:', error)
       const errorMessage: Message = {
-        id: `msg_${Date.now() + 1}`,
+        id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: '抱歉，发送消息时出现错误。请检查网络连接并重试。',
-        timestamp: new Date().toISOString()
+        content: '抱歉，发送消息时出现错误。请稍后重试。',
+        timestamp: new Date().toISOString(), // 使用 string 类型
       }
       const finalMessages = [...updatedMessages, errorMessage]
       setMessages(finalMessages)
+      saveCurrentChat && saveCurrentChat(finalMessages)
     } finally {
       setIsLoading(false)
     }
-  }, [messages, isLoading, saveCurrentChat])
+  }, [messages, isLoading])
+
+  // ... 保持现有的其他代码不变 ...
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden">
-      <Sidebar
+    <div className="h-screen flex bg-gray-50">
+      {/* 修正 Sidebar 的属性名 */}
+      <Sidebar 
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
+        onNewChat={startNewChat || (() => {})}
         chatHistory={chatHistory}
-        onNewChat={startNewChat}
-        onLoadChat={loadChat}
-        onDeleteChat={deleteChat}
         currentChatId={currentChatId}
+        onLoadChat={loadChat || ((chatId: string) => {})} // 改为 onLoadChat
+        onDeleteChat={deleteChat || ((chatId: string) => {})}
       />
 
-      <div className="flex flex-col flex-1 min-w-0">
-        {/* 顶部导航栏 - 固定定位 */}
-        <header className="flex items-center justify-between p-4 border-b border-gray-200 bg-white flex-shrink-0 z-10">
-          <div className="flex items-center space-x-3">
+      <div className="flex-1 flex flex-col min-h-0">
+        <header className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center space-x-4">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="p-2 hover:bg-gray-100 rounded-md transition-colors"
-            >
-              <Menu className="w-5 h-5 text-gray-600" />
-            </button>
-            <button
-              onClick={startNewChat}
               className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -197,7 +198,6 @@ export default function ChatPage() {
           </div>
         </header>
 
-        {/* 主要内容区域 */}
         <div className="flex-1 flex flex-col min-h-0">
           {messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full px-4">
@@ -229,32 +229,23 @@ export default function ChatPage() {
                       <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center">
                         <div className="w-3 h-3 bg-white rounded-full animate-pulse"></div>
                       </div>
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div 
-                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
-                          style={{ animationDelay: '0.1s' }}
-                        ></div>
-                        <div 
-                          className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" 
-                          style={{ animationDelay: '0.2s' }}
-                        ></div>
+                      <div className="flex-1 bg-gray-100 rounded-lg px-4 py-3">
+                        <div className="flex space-x-1">
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                        </div>
                       </div>
                     </div>
                   )}
-                  <div ref={messagesEndRef} />
                 </div>
               </div>
-
-              <div className="flex-shrink-0 px-4 py-6 border-t border-gray-200 bg-white">
-                <div className="max-w-4xl mx-auto">
-                  <ChatInput 
-                    onSendMessage={sendMessage} 
-                    disabled={isLoading} 
-                    hasMessages={true}
-                  />
-                </div>
-              </div>
+              <ChatInput 
+                onSendMessage={sendMessage} 
+                disabled={isLoading} 
+                hasMessages={true}
+              />
+              <div ref={messagesEndRef} />
             </>
           )}
         </div>

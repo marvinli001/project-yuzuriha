@@ -17,8 +17,20 @@ export const useVoiceRecording = () => {
         }
       });
       
+      // 检查浏览器支持的 MIME 类型
+      let mimeType = 'audio/webm;codecs=opus';
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        mimeType = 'audio/webm';
+        if (!MediaRecorder.isTypeSupported(mimeType)) {
+          mimeType = 'audio/mp4';
+          if (!MediaRecorder.isTypeSupported(mimeType)) {
+            mimeType = '';
+          }
+        }
+      }
+
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
+        mimeType: mimeType || undefined
       });
       
       mediaRecorderRef.current = mediaRecorder;
@@ -51,22 +63,26 @@ export const useVoiceRecording = () => {
 
         try {
           const audioBlob = new Blob(audioChunksRef.current, { 
-            type: 'audio/webm;codecs=opus' 
+            type: 'audio/webm' 
           });
           
-          // 转换为 WAV 格式（可选，取决于后端需求）
+          console.log('Audio blob created:', audioBlob.size, 'bytes');
+          
           const text = await transcribeAudio(audioBlob);
           setIsTranscribing(false);
           resolve(text);
         } catch (error) {
+          console.error('Transcription failed:', error);
           setIsTranscribing(false);
           reject(error);
         }
 
         // 停止所有音频轨道
-        mediaRecorderRef.current?.stream.getTracks().forEach(track => {
-          track.stop();
-        });
+        if (mediaRecorderRef.current?.stream) {
+          mediaRecorderRef.current.stream.getTracks().forEach(track => {
+            track.stop();
+          });
+        }
       };
 
       mediaRecorderRef.current.stop();
@@ -76,9 +92,11 @@ export const useVoiceRecording = () => {
   const cancelRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
-      mediaRecorderRef.current.stream.getTracks().forEach(track => {
-        track.stop();
-      });
+      if (mediaRecorderRef.current.stream) {
+        mediaRecorderRef.current.stream.getTracks().forEach(track => {
+          track.stop();
+        });
+      }
       setIsRecording(false);
       setIsTranscribing(false);
     }

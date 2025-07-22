@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useRef, useEffect, useCallback } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Send, Paperclip, Mic, MicOff, X, Image, FileText } from 'lucide-react'
 import { uploadFiles, UploadedFile, formatFileSize } from '../utils/fileUtils'
 import { useVoiceRecording } from '../hooks/useVoiceRecording'
@@ -74,11 +74,13 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
 
     setIsUploading(true)
     try {
+      console.log('Uploading files:', files.length)
       const uploadedFiles = await uploadFiles(files)
+      console.log('Upload successful:', uploadedFiles)
       setAttachedFiles(prev => [...prev, ...uploadedFiles])
     } catch (error) {
       console.error('File upload failed:', error)
-      // 可以添加错误提示
+      alert('文件上传失败: ' + error)
     } finally {
       setIsUploading(false)
       // 重置文件输入
@@ -97,18 +99,21 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
   const handleVoiceToggle = async () => {
     if (isRecording) {
       try {
+        console.log('Stopping recording...')
         const transcribedText = await stopRecording()
+        console.log('Transcription result:', transcribedText)
         setMessage(prev => prev + (prev ? ' ' : '') + transcribedText)
       } catch (error) {
         console.error('Voice recording failed:', error)
-        // 可以添加错误提示
+        alert('语音识别失败: ' + error)
       }
     } else {
       try {
+        console.log('Starting recording...')
         await startRecording()
       } catch (error) {
         console.error('Failed to start recording:', error)
-        // 可以添加错误提示
+        alert('无法开始录音: ' + error)
       }
     }
   }
