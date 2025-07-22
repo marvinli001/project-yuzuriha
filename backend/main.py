@@ -256,7 +256,8 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
         user_category, user_confidence = event_classifier.classify_event(request.message)
         
         # 3. 从 Milvus 检索相关记忆
-        milvus_memories = await memory_service.search_memories(
+        milvus_memories = await memory_service.retrieve_relevant_memories(
+            query=query_text,  # 添加 query 参数
             query_embedding=query_embedding,
             limit=5
         )
