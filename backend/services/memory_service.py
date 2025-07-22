@@ -138,7 +138,7 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
         except Exception as e:
             logger.error(f"检索记忆失败: {e}", exc_info=True)
             return []
-
+        
     async def store_event_memory(
         self,
         event_content: str,
@@ -228,3 +228,5 @@ AI回复类型: {ai_category} (置信度: {ai_confidence:.2f})
                 "time_awareness": True
             }
         }
+    
+    
