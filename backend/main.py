@@ -2,10 +2,14 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 from typing import List, Optional, Dict, Any
+import uuid
+import aiofiles
+import openai
 
 # 服务导入
 from services.openai_service import OpenAIService
@@ -26,27 +30,61 @@ emotion_analyzer = None
 event_classifier = None
 time_service = None
 
-# Pydantic 模型 - 修复 model_info 冲突
+# 配置上传目录
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# 允许的文件类型
+ALLOWED_EXTENSIONS = {
+    'image': {'png', 'jpg', 'jpeg', 'gif', 'webp'},
+    'document': {'pdf', 'txt', 'doc', 'docx'},
+    'audio': {'mp3', 'wav', 'ogg', 'm4a', 'flac', 'webm'}
+}
+
+# Pydantic 模型 - 保持现有的 + 添加新的
 class Message(BaseModel):
     role: str
     content: str
 
+class UploadedFile(BaseModel):
+    id: str
+    filename: str
+    type: str
+    size: int
+    path: str
+
 class ChatRequest(BaseModel):
     message: str
     history: List[Message] = []
+    files: List[UploadedFile] = []  # 新增文件字段
 
 class ChatResponse(BaseModel):
     response: str
     memories: List[Dict[str, Any]] = []
 
 class HealthResponse(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())  # 修复 Pydantic 警告
+    model_config = ConfigDict(protected_namespaces=())
     
     status: str
     timestamp: str
     services: Dict[str, bool]
     model_info: Dict[str, str]
     timezone: str
+
+class FileUploadResponse(BaseModel):
+    files: List[UploadedFile]
+
+class TranscriptionResponse(BaseModel):
+    text: str
+    success: bool
+
+# 工具函数
+def get_file_type(filename: str) -> str:
+    ext = filename.lower().split('.')[-1]
+    for file_type, extensions in ALLOWED_EXTENSIONS.items():
+        if ext in extensions:
+            return file_type
+    return 'other'
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -79,6 +117,10 @@ async def lifespan(app: FastAPI):
         event_classifier = EventClassifier()
         logger.info("✓ 情绪分析和事件分类服务初始化成功")
         
+        # 6. 配置 OpenAI (为语音转文本)
+        openai.api_key = os.getenv('OPENAI_API_KEY')
+        logger.info("✓ OpenAI 语音服务配置成功")
+        
         logger.info("🚀 所有服务初始化完成")
         
         yield
@@ -92,8 +134,8 @@ async def lifespan(app: FastAPI):
 # 创建 FastAPI 应用
 app = FastAPI(
     title="Project Yuzuriha Enhanced API",
-    description="AI聊天服务 with Enhanced Memory (Milvus Only)",
-    version="2.2.0",
+    description="AI聊天服务 with Enhanced Memory (Milvus Only) + File Upload + Voice",
+    version="2.3.0",
     lifespan=lifespan
 )
 
@@ -106,25 +148,117 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 静态文件服务 (用于文件上传)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+
+# === 新增的文件上传路由 ===
+@app.post("/api/upload", response_model=FileUploadResponse)
+async def upload_files(files: List[UploadFile] = File(...)):
+    """文件上传接口"""
+    uploaded_files = []
+    
+    for file in files:
+        if file.size > 10 * 1024 * 1024:  # 10MB limit
+            raise HTTPException(status_code=413, detail=f"File {file.filename} is too large")
+        
+        # 生成唯一文件名
+        file_id = str(uuid.uuid4())
+        file_ext = file.filename.split('.')[-1] if '.' in file.filename else ''
+        safe_filename = f"{file_id}.{file_ext}" if file_ext else file_id
+        file_path = os.path.join(UPLOAD_DIR, safe_filename)
+        
+        # 保存文件
+        async with aiofiles.open(file_path, 'wb') as f:
+            content = await file.read()
+            await f.write(content)
+        
+        uploaded_files.append(UploadedFile(
+            id=file_id,
+            filename=file.filename,
+            type=get_file_type(file.filename),
+            size=file.size,
+            path=file_path
+        ))
+    
+    logger.info(f"上传了 {len(uploaded_files)} 个文件")
+    return FileUploadResponse(files=uploaded_files)
+
+# === 新增的语音转文本路由 ===
+@app.post("/api/transcribe", response_model=TranscriptionResponse)
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """语音转文本接口"""
+    if not audio.content_type or not audio.content_type.startswith('audio/'):
+        raise HTTPException(status_code=400, detail="File must be an audio file")
+    
+    if audio.size > 25 * 1024 * 1024:  # 25MB limit for Whisper API
+        raise HTTPException(status_code=413, detail="Audio file is too large")
+    
+    try:
+        import tempfile
+        
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as tmp_file:
+            content = await audio.read()
+            tmp_file.write(content)
+            tmp_file.flush()
+            
+            # 使用 OpenAI Whisper API 进行转录
+            with open(tmp_file.name, 'rb') as audio_file:
+                client = openai.OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+                transcript = client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    language="zh"  # 指定中文，可根据需要调整
+                )
+        
+        # 删除临时文件
+        os.unlink(tmp_file.name)
+        
+        logger.info(f"语音转文本成功: {transcript.text[:50]}...")
+        return TranscriptionResponse(
+            text=transcript.text,
+            success=True
+        )
+        
+    except Exception as e:
+        # 确保临时文件被删除
+        if 'tmp_file' in locals():
+            try:
+                os.unlink(tmp_file.name)
+            except:
+                pass
+        
+        logger.error(f"语音转文本失败: {e}")
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+# === 修改的聊天接口（支持文件） ===
 @app.post("/api/chat", response_model=ChatResponse)
 async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks):
-    """增强聊天接口 - 纯 Milvus 版本"""
+    """增强聊天接口 - 纯 Milvus 版本 + 文件支持"""
     try:
         logger.info(f"收到聊天请求: {request.message[:50]}...")
         
-        # 1. 创建查询嵌入
-        query_embedding = await openai_service.create_embedding(request.message)
+        # 处理附件信息
+        file_context = ""
+        if request.files:
+            file_info = []
+            for file in request.files:
+                file_info.append(f"- {file.filename} ({file.type}, {file.size} bytes)")
+            file_context = f"\n\n用户上传了以下附件：\n" + "\n".join(file_info)
+            logger.info(f"包含 {len(request.files)} 个附件")
         
-        # 2. 分析用户消息
+        # 1. 创建查询嵌入
+        query_text = request.message + file_context
+        query_embedding = await openai_service.create_embedding(query_text)
+        
+        # 2. 情绪分析
         user_emotion = emotion_analyzer.analyze_emotion(request.message)
         user_category, user_confidence = event_classifier.classify_event(request.message)
         
-        # 3. 从 Milvus 检索相关记忆 - 添加 user_id 参数
-        milvus_memories = await memory_service.retrieve_relevant_memories(
-            query=request.message,
+        # 3. 从 Milvus 检索相关记忆
+        milvus_memories = await memory_service.search_memories(
             query_embedding=query_embedding,
-            limit=5,
-            user_id="marvinli001"  # 添加这个参数
+            limit=5
         )
         logger.info(f"从 Milvus 检索到 {len(milvus_memories)} 个记忆")
         
@@ -134,9 +268,10 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
             for msg in request.history
         ]
         
-        # 5. 生成AI回复
+        # 5. 生成AI回复（包含文件上下文）
+        enhanced_message = query_text  # 包含文件信息的消息
         response = await openai_service.generate_response(
-            request.message,
+            enhanced_message,
             memories=milvus_memories,
             conversation_history=conversation_history
         )
@@ -144,7 +279,7 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
         # 6. 后台存储记忆
         background_tasks.add_task(
             store_conversation_memories,
-            request.message,
+            enhanced_message,  # 存储包含文件信息的消息
             response,
             query_embedding,
             user_emotion,
@@ -152,26 +287,18 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
             user_confidence
         )
         
-        logger.info("✓ 聊天请求处理成功")
+        logger.info(f"聊天处理完成，生成回复长度: {len(response)}")
         
         return ChatResponse(
             response=response,
-            memories=[
-                {
-                    "text": m.get("content", ""),
-                    "score": m.get("relevance_score", 0.0),
-                    "source": "milvus",
-                    "timestamp": m.get("timestamp", 0),
-                    "category": m.get("category", "general"),
-                    "emotion_weight": m.get("emotion_weight", 0.0)
-                } for m in milvus_memories
-            ]
+            memories=milvus_memories
         )
         
     except Exception as e:
-        logger.error(f"❌ 聊天处理错误: {e}")
-        raise HTTPException(status_code=500, detail=f"处理聊天请求时发生错误: {str(e)}")
+        logger.error(f"聊天处理错误: {e}")
+        raise HTTPException(status_code=500, detail=f"聊天处理失败: {str(e)}")
 
+# === 保持现有的其他路由 ===
 async def store_conversation_memories(
     user_message: str,
     ai_response: str,
@@ -180,38 +307,33 @@ async def store_conversation_memories(
     user_category: str,
     user_confidence: float
 ):
-    """后台任务：存储对话记忆到 Milvus"""
+    """存储对话记忆到 Milvus"""
     try:
-        # 1. 分析AI回复
-        ai_emotion = emotion_analyzer.analyze_emotion(ai_response)
-        ai_category, ai_confidence = event_classifier.classify_event(ai_response)
-        
-        # 2. 确定交互类型
-        interaction_type = memory_service._determine_interaction_type(user_category, ai_category)
-        
-        # 3. 存储用户消息到Milvus
-        milvus_user_success = await milvus_service.store_memory(
-            text=f"用户: {user_message}",
-            embedding=query_embedding,
-            emotion_weight=user_emotion.get('emotion_weight', 0.5),
+        # 存储用户消息记忆
+        await memory_service.store_memory(
+            content=user_message,
+            memory_type="user_message",
+            importance_score=user_confidence,
+            emotion_data=user_emotion,
             event_category=user_category,
-            interaction_type=interaction_type
+            embedding=query_embedding
         )
         
-        # 4. 为AI回复创建嵌入并存储
-        ai_embedding = await openai_service.create_embedding(ai_response)
-        milvus_ai_success = await milvus_service.store_memory(
-            text=f"助手: {ai_response}",
-            embedding=ai_embedding,
-            emotion_weight=ai_emotion.get('emotion_weight', 0.5),
-            event_category=ai_category,
-            interaction_type=interaction_type
+        # 存储 AI 回复记忆
+        response_embedding = await openai_service.create_embedding(ai_response)
+        await memory_service.store_memory(
+            content=ai_response,
+            memory_type="ai_response",
+            importance_score=0.7,
+            emotion_data={},
+            event_category="response",
+            embedding=response_embedding
         )
         
-        logger.info(f"✓ 记忆存储完成 - Milvus用户: {'✓' if milvus_user_success else '✗'}, MilvusAI: {'✓' if milvus_ai_success else '✗'}")
+        logger.info("对话记忆存储完成")
         
     except Exception as e:
-        logger.error(f"存储对话记忆时发生错误: {e}")
+        logger.error(f"存储对话记忆失败: {e}")
 
 @app.get("/health", response_model=HealthResponse)
 async def enhanced_health_check():
@@ -270,7 +392,7 @@ async def root():
     
     return {
         "message": "Project Yuzuriha Enhanced API",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "status": "running",
         "current_time": time_info['current_time'],
         "memory_backend": "milvus_only",
@@ -281,7 +403,9 @@ async def root():
             "事件分类", 
             "时间感知",
             "语义搜索",
-            "Zilliz Cloud Milvus"
+            "Zilliz Cloud Milvus",
+            "文件上传",
+            "语音转文本"
         ]
     }
 

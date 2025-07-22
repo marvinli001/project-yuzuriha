@@ -1,10 +1,11 @@
 'use client'
-
-import { useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, Mic } from 'lucide-react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { Send, Paperclip, Mic, MicOff, X, Image, FileText } from 'lucide-react'
+import { uploadFiles, UploadedFile, formatFileSize } from '../utils/fileUtils'
+import { useVoiceRecording } from '../hooks/useVoiceRecording'
 
 interface ChatInputProps {
-  onSendMessage: (message: string) => void
+  onSendMessage: (message: string, files?: UploadedFile[]) => void
   disabled?: boolean
   hasMessages?: boolean
 }
@@ -12,7 +13,18 @@ interface ChatInputProps {
 export default function ChatInput({ onSendMessage, disabled = false, hasMessages = false }: ChatInputProps) {
   const [message, setMessage] = useState('')
   const [isComposing, setIsComposing] = useState(false)
+  const [attachedFiles, setAttachedFiles] = useState<UploadedFile[]>([])
+  const [isUploading, setIsUploading] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  
+  const {
+    isRecording,
+    isTranscribing,
+    startRecording,
+    stopRecording,
+    cancelRecording,
+  } = useVoiceRecording()
 
   // 自动调整文本框高度
   useEffect(() => {
@@ -33,9 +45,10 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (message.trim() && !disabled && !isComposing) {
-      onSendMessage(message.trim())
+    if ((message.trim() || attachedFiles.length > 0) && !disabled && !isComposing) {
+      onSendMessage(message.trim(), attachedFiles)
       setMessage('')
+      setAttachedFiles([])
     }
   }
 
@@ -52,6 +65,69 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
 
   const handleCompositionEnd = () => {
     setIsComposing(false)
+  }
+
+  // 文件上传处理
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setIsUploading(true)
+    try {
+      const uploadedFiles = await uploadFiles(files)
+      setAttachedFiles(prev => [...prev, ...uploadedFiles])
+    } catch (error) {
+      console.error('File upload failed:', error)
+      // 可以添加错误提示
+    } finally {
+      setIsUploading(false)
+      // 重置文件输入
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
+  // 移除附件
+  const removeFile = (fileId: string) => {
+    setAttachedFiles(prev => prev.filter(file => file.id !== fileId))
+  }
+
+  // 语音录制处理
+  const handleVoiceToggle = async () => {
+    if (isRecording) {
+      try {
+        const transcribedText = await stopRecording()
+        setMessage(prev => prev + (prev ? ' ' : '') + transcribedText)
+      } catch (error) {
+        console.error('Voice recording failed:', error)
+        // 可以添加错误提示
+      }
+    } else {
+      try {
+        await startRecording()
+      } catch (error) {
+        console.error('Failed to start recording:', error)
+        // 可以添加错误提示
+      }
+    }
+  }
+
+  // 取消录音
+  const handleCancelRecording = () => {
+    cancelRecording()
+  }
+
+  // 文件图标
+  const getFileIcon = (type: string) => {
+    switch (type) {
+      case 'image':
+        return <Image size={14} />
+      case 'document':
+        return <FileText size={14} />
+      default:
+        return <Paperclip size={14} />
+    }
   }
 
   // OpenAI 风格的首页输入框样式
@@ -72,14 +148,43 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
   return (
     <div className={homePageStyle.containerClass}>
       <form onSubmit={handleSubmit} className={homePageStyle.formClass}>
+        {/* 附件预览 */}
+        {attachedFiles.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            {attachedFiles.map(file => (
+              <div key={file.id} className="flex items-center gap-2 bg-gray-100 rounded-lg px-3 py-2 text-sm">
+                {getFileIcon(file.type)}
+                <span className="truncate max-w-32">{file.filename}</span>
+                <span className="text-gray-500">({formatFileSize(file.size)})</span>
+                <button
+                  type="button"
+                  onClick={() => removeFile(file.id)}
+                  className="text-gray-400 hover:text-red-500 transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className={homePageStyle.inputContainerClass}>
           {/* 附件按钮 */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept="image/*,.pdf,.txt,.doc,.docx,audio/*"
+            onChange={handleFileSelect}
+            className="hidden"
+          />
           <button
             type="button"
-            className="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors touch-target focus-visible"
-            title="附件 (即将推出)"
-            disabled
-            aria-label="附件"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled || isUploading}
+            className="flex-shrink-0 p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors touch-target focus-visible disabled:opacity-50"
+            title="上传附件"
+            aria-label="上传附件"
           >
             <Paperclip size={18} />
           </button>
@@ -99,9 +204,25 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
             style={{ lineHeight: '1.5' }}
           />
 
+          {/* 录音状态指示器 */}
+          {isRecording && (
+            <div className="flex items-center gap-2 text-red-600">
+              <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+              <span className="text-xs">录音中...</span>
+              <button
+                type="button"
+                onClick={handleCancelRecording}
+                className="p-1 hover:bg-red-100 rounded"
+                title="取消录音"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
           {/* 发送/语音按钮 */}
           <div className="flex-shrink-0 flex items-center gap-2">
-            {message.trim() ? (
+            {message.trim() || attachedFiles.length > 0 ? (
               <button
                 type="submit"
                 disabled={disabled || isComposing}
@@ -113,15 +234,33 @@ export default function ChatInput({ onSendMessage, disabled = false, hasMessages
             ) : (
               <button
                 type="button"
-                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
-                title="语音输入 (即将推出)"
-                disabled
+                onClick={handleVoiceToggle}
+                disabled={disabled || isTranscribing}
+                className={`p-2 rounded-lg transition-colors ${
+                  isRecording 
+                    ? 'bg-red-100 text-red-600 hover:bg-red-200' 
+                    : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                }`}
+                title={isRecording ? "停止录音" : isTranscribing ? "转换中..." : "开始录音"}
               >
-                <Mic size={18} />
+                {isTranscribing ? (
+                  <div className="animate-spin w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full" />
+                ) : isRecording ? (
+                  <MicOff size={18} />
+                ) : (
+                  <Mic size={18} />
+                )}
               </button>
             )}
           </div>
         </div>
+        
+        {/* 上传状态 */}
+        {isUploading && (
+          <div className="text-xs text-gray-500 mt-1 text-center">
+            正在上传文件...
+          </div>
+        )}
       </form>
     </div>
   )
