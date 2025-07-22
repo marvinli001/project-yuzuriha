@@ -314,25 +314,25 @@ async def store_conversation_memories(
 ):
     """存储对话记忆到 Milvus"""
     try:
-        # 存储用户消息记忆
-        await memory_service.store_memory(
-            content=user_message,
-            memory_type="user_message",
-            importance_score=user_confidence,
-            emotion_data=user_emotion,
+        # 存储用户消息
+        await milvus_service.store_memory(
+            text=user_message,
+            embedding=query_embedding,
+            user_id="marvinli001",
+            emotion_weight=user_emotion.get('emotion_weight', 0.0),
             event_category=user_category,
-            embedding=query_embedding
+            interaction_type="user_message"
         )
         
-        # 存储 AI 回复记忆
+        # 存储 AI 回复
         response_embedding = await openai_service.create_embedding(ai_response)
-        await memory_service.store_memory(
-            content=ai_response,
-            memory_type="ai_response",
-            importance_score=0.7,
-            emotion_data={},
+        await milvus_service.store_memory(
+            text=ai_response,
+            embedding=response_embedding,
+            user_id="marvinli001",
+            emotion_weight=0.7,  # AI回复的默认情绪权重
             event_category="response",
-            embedding=response_embedding
+            interaction_type="ai_response"
         )
         
         logger.info("对话记忆存储完成")
