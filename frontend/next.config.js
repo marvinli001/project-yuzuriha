@@ -27,17 +27,16 @@ const nextConfig = {
     ]
   },
   
-  // API 代理
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: process.env.NEXT_PUBLIC_API_URL 
-          ? `${process.env.NEXT_PUBLIC_API_URL}/:path*`
-          : 'http://localhost:8000/:path*'
-      }
-    ]
-  },
+async rewrites() {
+  return [
+    {
+      source: '/api/:path*',
+      destination: process.env.NEXT_PUBLIC_API_URL 
+        ? `${process.env.NEXT_PUBLIC_API_URL}/:path*`
+        : 'http://localhost:8000/:path*'  // 确保后端地址正确
+    }
+  ]
+},
   
   // 安全头
   async headers() {

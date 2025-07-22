@@ -297,7 +297,11 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
     except Exception as e:
         logger.error(f"聊天处理错误: {e}")
         raise HTTPException(status_code=500, detail=f"聊天处理失败: {str(e)}")
-
+# 在现有的 @app.post("/api/chat") 之后添加
+@app.post("/chat", response_model=ChatResponse)
+async def chat_legacy(request: ChatRequest, background_tasks: BackgroundTasks):
+    """兼容旧版本的聊天接口"""
+    return await enhanced_chat(request, background_tasks)
 # === 保持现有的其他路由 ===
 async def store_conversation_memories(
     user_message: str,
