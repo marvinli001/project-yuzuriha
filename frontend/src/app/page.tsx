@@ -8,6 +8,9 @@ import ChatInput from '@/components/ChatInput'
 import { Menu, Plus} from 'lucide-react'
 import { UploadedFile } from '../utils/fileUtils'
 
+// API配置
+const API_SECRET_KEY = process.env.NEXT_PUBLIC_API_SECRET_KEY || 'PdL3tU8YgmdAnR8p2cRa';
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
   const [isLoading, setIsLoading] = useState(false)
@@ -121,6 +124,7 @@ export default function ChatPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${API_SECRET_KEY}`, // 添加鉴权头
         },
         body: JSON.stringify({
           message: content,
@@ -128,11 +132,14 @@ export default function ChatPage() {
             role: msg.role,
             content: msg.content
           })),
-          files: files || [] // 发送文件信息
+          files: files || []
         }),
       })
 
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('API密钥验证失败，请检查配置')
+        }
         throw new Error('Failed to send message')
       }
 

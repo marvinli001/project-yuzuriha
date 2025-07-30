@@ -18,6 +18,9 @@ from services.memory_service import MemoryService
 from services.emotion_service import EmotionAnalyzer, EventClassifier
 from services.time_service import TimeService
 
+# 新增：导入鉴权模块
+from auth.api_auth import require_api_key
+
 # 配置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -152,7 +155,7 @@ app.add_middleware(
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # === 新增的文件上传路由 ===
-@app.post("/api/upload", response_model=FileUploadResponse)
+@app.post("/api/upload", response_model=FileUploadResponse, dependencies=[require_api_key()])
 async def upload_files(files: List[UploadFile] = File(...)):
     """文件上传接口"""
     uploaded_files = []
@@ -184,7 +187,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
     return FileUploadResponse(files=uploaded_files)
 
 # === 新增的语音转文本路由 ===
-@app.post("/api/transcribe", response_model=TranscriptionResponse)
+@app.post("/api/transcribe", response_model=TranscriptionResponse, dependencies=[require_api_key()])
 async def transcribe_audio(audio: UploadFile = File(...)):
     """语音转文本接口"""
     if not audio.content_type or not audio.content_type.startswith('audio/'):
@@ -232,7 +235,7 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
 
 # === 修改的聊天接口（支持文件） ===
-@app.post("/api/chat", response_model=ChatResponse)
+@app.post("/api/chat", response_model=ChatResponse, dependencies=[require_api_key()])
 async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks):
     """增强聊天接口 - 纯 Milvus 版本 + 文件支持"""
     try:
@@ -298,6 +301,7 @@ async def enhanced_chat(request: ChatRequest, background_tasks: BackgroundTasks)
     except Exception as e:
         logger.error(f"聊天处理错误: {e}")
         raise HTTPException(status_code=500, detail=f"聊天处理失败: {str(e)}")
+
 # 在现有的 @app.post("/api/chat") 之后添加
 @app.post("/chat", response_model=ChatResponse)
 async def chat_legacy(request: ChatRequest, background_tasks: BackgroundTasks):
