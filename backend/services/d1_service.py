@@ -93,6 +93,25 @@ class D1Service:
         
         return True
     
+    def _parse_d1_row(self, row: Any, columns: List[str]) -> Dict[str, Any]:
+        """解析D1返回的行数据，支持数组和对象格式"""
+        if isinstance(row, dict):
+            # 如果已经是字典格式，直接返回
+            return row
+        elif isinstance(row, list) and columns:
+            # 如果是数组格式，根据列名转换为字典
+            result = {}
+            for i, column in enumerate(columns):
+                if i < len(row):
+                    result[column] = row[i]
+                else:
+                    result[column] = None
+            return result
+        else:
+            # 其他情况，尝试转换为字典
+            logger.warning(f"无法解析D1行数据格式: {type(row)}, 数据: {row}")
+            return {}
+    
     async def _execute_with_retry(self, url: str, payload: Dict[str, Any], operation_name: str) -> Dict[str, Any]:
         """带重试机制的请求执行"""
         last_exception = None
@@ -195,6 +214,7 @@ class D1Service:
         # 清理和验证参数
         cleaned_params = self._validate_and_clean_params(params or [])
         
+        # 根据 D1 API 文档，单个查询使用对象格式
         payload = {
             "sql": sql,
             "params": cleaned_params
@@ -214,7 +234,7 @@ class D1Service:
             raise
     
     async def execute_batch(self, queries: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """批量执行 SQL 查询"""
+        """批量执行 SQL 查询 - 使用顺序执行"""
         if not self.enabled:
             raise Exception("D1 服务未启用")
         
@@ -240,53 +260,35 @@ class D1Service:
         
         logger.info(f"准备执行 {len(cleaned_queries)} 个批量查询")
         
-        # 根据 Cloudflare D1 API 文档，REST API 可能不支持真正的批量查询
-        # 我们先尝试批量，失败则回退到顺序执行
+        # D1 REST API 不支持真正的批量查询，只能顺序执行
         try:
-            if self.debug_mode:
-                logger.info("尝试真正的批量查询...")
+            results = []
+            total_duration = 0
             
-            # 尝试发送批量查询（数组格式）
-            try:
-                return await self._execute_with_retry(
-                    f"{self.base_url}/query",
-                    cleaned_queries,
-                    "批量查询"
-                )
-            except Exception as batch_error:
-                logger.info(f"批量查询失败，回退到顺序执行: {batch_error}")
-                
-                # 回退到顺序执行单个查询
-                if self.debug_mode:
-                    logger.info("开始顺序执行单个查询...")
-                
-                results = []
-                total_duration = 0
-                
-                for i, query in enumerate(cleaned_queries):
-                    try:
-                        if self.debug_mode:
-                            logger.info(f"执行顺序查询 {i+1}/{len(cleaned_queries)}: {query['sql'][:100]}...")
-                        
-                        result = await self.execute_query(query["sql"], query["params"])
-                        if result.get("success"):
-                            results.append(result.get("result", []))
-                            total_duration += result.get("meta", {}).get("duration", 0)
-                            logger.info(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行成功")
-                        else:
-                            logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 返回失败: {result}")
-                            raise Exception(f"查询 {i+1} 执行失败")
-                    except Exception as query_error:
-                        logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行失败: {query_error}")
-                        raise Exception(f"查询 {i+1} 执行失败: {query_error}")
-                
-                # 返回模拟的批量结果格式
-                logger.info(f"所有 {len(cleaned_queries)} 个查询顺序执行成功")
-                return {
-                    "success": True,
-                    "result": results,
-                    "meta": {"duration": total_duration}
-                }
+            for i, query in enumerate(cleaned_queries):
+                try:
+                    if self.debug_mode:
+                        logger.info(f"执行顺序查询 {i+1}/{len(cleaned_queries)}: {query['sql'][:100]}...")
+                    
+                    result = await self.execute_query(query["sql"], query["params"])
+                    if result.get("success"):
+                        results.append(result.get("result", []))
+                        total_duration += result.get("meta", {}).get("duration", 0)
+                        logger.info(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行成功")
+                    else:
+                        logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 返回失败: {result}")
+                        raise Exception(f"查询 {i+1} 执行失败")
+                except Exception as query_error:
+                    logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行失败: {query_error}")
+                    raise Exception(f"查询 {i+1} 执行失败: {query_error}")
+            
+            # 返回模拟的批量结果格式
+            logger.info(f"所有 {len(cleaned_queries)} 个查询顺序执行成功")
+            return {
+                "success": True,
+                "result": results,
+                "meta": {"duration": total_duration}
+            }
                 
         except Exception as e:
             logger.error(f"D1 批量查询执行失败: {e}")
@@ -326,13 +328,26 @@ class D1Service:
             sessions = []
             
             if result.get("success") and result.get("result"):
-                for row in result["result"]:
-                    sessions.append({
-                        "id": row["id"],
-                        "title": row["title"],
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"]
-                    })
+                # D1 API 的响应结构
+                query_result = result["result"][0] if isinstance(result["result"], list) else result["result"]
+                
+                # 获取列信息和结果行
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                logger.debug(f"D1 查询列信息: {columns}")
+                logger.debug(f"D1 查询结果数量: {len(results)}")
+                
+                # 解析每一行数据
+                for row in results:
+                    parsed_row = self._parse_d1_row(row, columns)
+                    if parsed_row:
+                        sessions.append({
+                            "id": parsed_row.get("id"),
+                            "title": parsed_row.get("title"),
+                            "created_at": parsed_row.get("created_at"),
+                            "updated_at": parsed_row.get("updated_at")
+                        })
             
             logger.info(f"获取到 {len(sessions)} 个聊天会话")
             return sessions
@@ -352,14 +367,23 @@ class D1Service:
         try:
             result = await self.execute_query(sql, params)
             
-            if result.get("success") and result.get("result") and len(result["result"]) > 0:
-                row = result["result"][0]
-                return {
-                    "id": row["id"],
-                    "title": row["title"],
-                    "created_at": row["created_at"],
-                    "updated_at": row["updated_at"]
-                }
+            if result.get("success") and result.get("result"):
+                # D1 API 的响应结构
+                query_result = result["result"][0] if isinstance(result["result"], list) else result["result"]
+                
+                # 获取列信息和结果行
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                if results:
+                    row = results[0]
+                    parsed_row = self._parse_d1_row(row, columns)
+                    return {
+                        "id": parsed_row.get("id"),
+                        "title": parsed_row.get("title"),
+                        "created_at": parsed_row.get("created_at"),
+                        "updated_at": parsed_row.get("updated_at")
+                    }
             return None
         except Exception as e:
             logger.error(f"获取聊天会话失败: {e}")
@@ -395,19 +419,13 @@ class D1Service:
     
     async def delete_chat_session(self, session_id: str) -> bool:
         """删除聊天会话及其所有消息"""
-        queries = [
-            {
-                "sql": "DELETE FROM chat_messages WHERE session_id = ?",
-                "params": [session_id]
-            },
-            {
-                "sql": "DELETE FROM chat_sessions WHERE id = ?",
-                "params": [session_id]
-            }
-        ]
-        
+        # 先删除消息，再删除会话
         try:
-            result = await self.execute_batch(queries)
+            # 删除消息
+            await self.execute_query("DELETE FROM chat_messages WHERE session_id = ?", [session_id])
+            # 删除会话
+            result = await self.execute_query("DELETE FROM chat_sessions WHERE id = ?", [session_id])
+            
             success = result.get("success", False)
             logger.info(f"删除聊天会话 {session_id}: {'成功' if success else '失败'}")
             return success
@@ -420,33 +438,33 @@ class D1Service:
         message_id = str(uuid.uuid4())
         timestamp = int(time.time() * 1000)
         
-        # 先添加消息
-        sql_message = """
-        INSERT INTO chat_messages (id, session_id, role, content, timestamp)
-        VALUES (?, ?, ?, ?, ?)
-        """
-        params_message = [message_id, session_id, role, content, timestamp]
-        
-        # 然后更新会话的 updated_at
-        sql_session = """
-        UPDATE chat_sessions
-        SET updated_at = ?
-        WHERE id = ?
-        """
-        params_session = [timestamp, session_id]
-        
-        queries = [
-            {"sql": sql_message, "params": params_message},
-            {"sql": sql_session, "params": params_session}
-        ]
-        
         try:
-            result = await self.execute_batch(queries)
-            if result.get("success"):
-                logger.info(f"添加聊天消息成功: {message_id}")
-                return message_id
-            else:
-                raise Exception("批量查询失败")
+            # 首先确保会话存在，如果不存在则创建
+            session = await self.get_chat_session(session_id)
+            if not session:
+                logger.info(f"会话 {session_id} 不存在，创建新会话")
+                await self.create_chat_session("新对话")
+            
+            # 添加消息
+            sql_message = """
+            INSERT INTO chat_messages (id, session_id, role, content, timestamp)
+            VALUES (?, ?, ?, ?, ?)
+            """
+            params_message = [message_id, session_id, role, content, timestamp]
+            await self.execute_query(sql_message, params_message)
+            
+            # 更新会话的 updated_at
+            sql_session = """
+            UPDATE chat_sessions
+            SET updated_at = ?
+            WHERE id = ?
+            """
+            params_session = [timestamp, session_id]
+            await self.execute_query(sql_session, params_session)
+            
+            logger.info(f"添加聊天消息成功: {message_id}")
+            return message_id
+            
         except Exception as e:
             logger.error(f"添加聊天消息失败: {e}")
             raise
@@ -467,14 +485,24 @@ class D1Service:
             messages = []
             
             if result.get("success") and result.get("result"):
-                for row in result["result"]:
-                    messages.append({
-                        "id": row["id"],
-                        "session_id": row["session_id"],
-                        "role": row["role"],
-                        "content": row["content"],
-                        "timestamp": row["timestamp"]
-                    })
+                # D1 API 的响应结构
+                query_result = result["result"][0] if isinstance(result["result"], list) else result["result"]
+                
+                # 获取列信息和结果行
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                # 解析每一行数据
+                for row in results:
+                    parsed_row = self._parse_d1_row(row, columns)
+                    if parsed_row:
+                        messages.append({
+                            "id": parsed_row.get("id"),
+                            "session_id": parsed_row.get("session_id"),
+                            "role": parsed_row.get("role"),
+                            "content": parsed_row.get("content"),
+                            "timestamp": parsed_row.get("timestamp")
+                        })
             
             logger.info(f"获取到 {len(messages)} 条聊天消息")
             return messages
@@ -494,8 +522,18 @@ class D1Service:
         try:
             result = await self.execute_query(sql, params)
             
-            if result.get("success") and result.get("result") and len(result["result"]) > 0:
-                return result["result"][0]["count"]
+            if result.get("success") and result.get("result"):
+                # D1 API 的响应结构
+                query_result = result["result"][0] if isinstance(result["result"], list) else result["result"]
+                
+                # 获取列信息和结果行
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                if results:
+                    row = results[0]
+                    parsed_row = self._parse_d1_row(row, columns)
+                    return parsed_row.get("count", 0)
             return 0
         except Exception as e:
             logger.error(f"获取消息数量失败: {e}")
@@ -518,15 +556,25 @@ class D1Service:
             messages = []
             
             if result.get("success") and result.get("result"):
-                for row in result["result"]:
-                    messages.append({
-                        "id": row["id"],
-                        "session_id": row["session_id"],
-                        "role": row["role"],
-                        "content": row["content"],
-                        "timestamp": row["timestamp"],
-                        "session_title": row["title"]
-                    })
+                # D1 API 的响应结构
+                query_result = result["result"][0] if isinstance(result["result"], list) else result["result"]
+                
+                # 获取列信息和结果行
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                # 解析每一行数据
+                for row in results:
+                    parsed_row = self._parse_d1_row(row, columns)
+                    if parsed_row:
+                        messages.append({
+                            "id": parsed_row.get("id"),
+                            "session_id": parsed_row.get("session_id"),
+                            "role": parsed_row.get("role"),
+                            "content": parsed_row.get("content"),
+                            "timestamp": parsed_row.get("timestamp"),
+                            "session_title": parsed_row.get("title")
+                        })
             
             logger.info(f"搜索到 {len(messages)} 条匹配消息")
             return messages
@@ -536,37 +584,42 @@ class D1Service:
     
     async def get_stats(self) -> Dict[str, Any]:
         """获取统计信息"""
-        queries = [
-            {
-                "sql": "SELECT COUNT(*) as session_count FROM chat_sessions",
-                "params": []
-            },
-            {
-                "sql": "SELECT COUNT(*) as message_count FROM chat_messages",
-                "params": []
-            }
-        ]
-        
         try:
-            result = await self.execute_batch(queries)
+            # 分别执行查询
+            session_result = await self.execute_query("SELECT COUNT(*) as session_count FROM chat_sessions", [])
+            message_result = await self.execute_query("SELECT COUNT(*) as message_count FROM chat_messages", [])
             
-            if result.get("success") and len(result.get("result", [])) >= 2:
-                session_count = result["result"][0].get("session_count", 0)
-                message_count = result["result"][1].get("message_count", 0)
+            session_count = 0
+            message_count = 0
+            
+            if session_result.get("success") and session_result.get("result"):
+                # D1 API 的响应结构
+                query_result = session_result["result"][0] if isinstance(session_result["result"], list) else session_result["result"]
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
                 
-                return {
-                    "enabled": self.enabled,
-                    "session_count": session_count,
-                    "message_count": message_count,
-                    "database_name": self.database_name
-                }
-            else:
-                return {
-                    "enabled": self.enabled,
-                    "session_count": 0,
-                    "message_count": 0,
-                    "database_name": self.database_name
-                }
+                if results:
+                    row = results[0]
+                    parsed_row = self._parse_d1_row(row, columns)
+                    session_count = parsed_row.get("session_count", 0)
+            
+            if message_result.get("success") and message_result.get("result"):
+                # D1 API 的响应结构
+                query_result = message_result["result"][0] if isinstance(message_result["result"], list) else message_result["result"]
+                columns = query_result.get("meta", {}).get("columns", [])
+                results = query_result.get("results", [])
+                
+                if results:
+                    row = results[0]
+                    parsed_row = self._parse_d1_row(row, columns)
+                    message_count = parsed_row.get("message_count", 0)
+            
+            return {
+                "enabled": self.enabled,
+                "session_count": session_count,
+                "message_count": message_count,
+                "database_name": self.database_name
+            }
         except Exception as e:
             logger.error(f"获取统计信息失败: {e}")
             return {
