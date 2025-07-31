@@ -8,6 +8,7 @@ import json
 import uuid
 import time
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 import httpx
 from datetime import datetime
@@ -36,64 +37,158 @@ class D1Service:
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json"
         }
+        # 重试配置
+        self.max_retries = 3
+        self.retry_delay = 1.0  # 初始延迟秒数
     
     def is_enabled(self) -> bool:
         """检查 D1 服务是否可用"""
         return self.enabled
+    
+    def _validate_and_clean_params(self, params: List[Any]) -> List[Any]:
+        """验证和清理查询参数"""
+        if not params:
+            return []
+        
+        cleaned_params = []
+        for param in params:
+            if param is None:
+                cleaned_params.append(None)
+            elif isinstance(param, (str, int, float, bool)):
+                cleaned_params.append(param)
+            elif isinstance(param, bytes):
+                # D1 不直接支持二进制数据，转换为字符串
+                cleaned_params.append(param.decode('utf-8', errors='replace'))
+            else:
+                # 对于复杂类型，转换为 JSON 字符串
+                try:
+                    cleaned_params.append(json.dumps(param, ensure_ascii=False))
+                except (TypeError, ValueError):
+                    cleaned_params.append(str(param))
+        
+        return cleaned_params
+    
+    def _validate_sql(self, sql: str) -> bool:
+        """基本的 SQL 语句验证"""
+        if not sql or not isinstance(sql, str):
+            return False
+        
+        sql = sql.strip()
+        if not sql:
+            return False
+        
+        # 基本的 SQL 注入防护 - 检查危险关键词
+        dangerous_keywords = ['DROP', 'DELETE FROM', 'TRUNCATE', 'ALTER TABLE']
+        sql_upper = sql.upper()
+        
+        # 对于某些操作，我们需要额外小心
+        for keyword in dangerous_keywords:
+            if keyword in sql_upper:
+                logger.warning(f"SQL 包含潜在危险关键词: {keyword}")
+        
+        return True
+    
+    async def _execute_with_retry(self, url: str, payload: Dict[str, Any], operation_name: str) -> Dict[str, Any]:
+        """带重试机制的请求执行"""
+        last_exception = None
+        
+        for attempt in range(self.max_retries):
+            try:
+                async with httpx.AsyncClient() as client:
+                    logger.info(f"D1 {operation_name} 请求 (尝试 {attempt + 1}/{self.max_retries}): URL={url}")
+                    
+                    response = await client.post(
+                        url,
+                        headers=self.headers,
+                        json=payload,
+                        timeout=30.0
+                    )
+                    
+                    logger.info(f"D1 {operation_name} 响应状态: {response.status_code}")
+                    
+                    if response.is_success:
+                        result = response.json()
+                        logger.debug(f"D1 {operation_name} 成功")
+                        return result
+                    else:
+                        response_text = response.text
+                        logger.error(f"D1 {operation_name} 失败 - 状态码: {response.status_code}")
+                        logger.error(f"响应内容: {response_text}")
+                        
+                        # 对于 4xx 错误，不重试
+                        if 400 <= response.status_code < 500:
+                            response.raise_for_status()
+                        
+                        # 对于 5xx 错误，可以重试
+                        if attempt < self.max_retries - 1:
+                            delay = self.retry_delay * (2 ** attempt)  # 指数退避
+                            logger.info(f"等待 {delay} 秒后重试...")
+                            await asyncio.sleep(delay)
+                            continue
+                        else:
+                            response.raise_for_status()
+                            
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                logger.error(f"D1 {operation_name} HTTP 错误: {e.response.status_code} - {e.response.text}")
+                
+                # 对于 4xx 错误，不重试
+                if 400 <= e.response.status_code < 500:
+                    raise
+                    
+                # 对于 5xx 错误，可以重试
+                if attempt < self.max_retries - 1:
+                    delay = self.retry_delay * (2 ** attempt)
+                    logger.info(f"遇到 {e.response.status_code} 错误，等待 {delay} 秒后重试...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise
+                    
+            except Exception as e:
+                last_exception = e
+                logger.error(f"D1 {operation_name} 异常: {e}")
+                
+                if attempt < self.max_retries - 1:
+                    delay = self.retry_delay * (2 ** attempt)
+                    logger.info(f"遇到异常，等待 {delay} 秒后重试...")
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    raise
+        
+        # 如果所有重试都失败了
+        if last_exception:
+            raise last_exception
+        else:
+            raise Exception(f"D1 {operation_name} 在 {self.max_retries} 次尝试后失败")
     
     async def execute_query(self, sql: str, params: List[Any] = None) -> Dict[str, Any]:
         """执行 SQL 查询"""
         if not self.enabled:
             raise Exception("D1 服务未启用")
         
-        # 确保参数格式正确 - 根据 Cloudflare D1 API 文档
-        cleaned_params = []
-        if params:
-            for param in params:
-                # 确保参数类型正确，D1 支持 string, number, boolean, null
-                if param is None:
-                    cleaned_params.append(None)
-                elif isinstance(param, (str, int, float, bool)):
-                    cleaned_params.append(param)
-                else:
-                    # 对于其他类型，转换为字符串
-                    cleaned_params.append(str(param))
+        # 验证 SQL 语句
+        if not self._validate_sql(sql):
+            raise ValueError("无效的 SQL 语句")
+        
+        # 清理和验证参数
+        cleaned_params = self._validate_and_clean_params(params or [])
         
         payload = {
             "sql": sql,
             "params": cleaned_params
         }
         
+        logger.debug(f"D1 查询 SQL: {sql}")
+        logger.debug(f"D1 查询参数: {cleaned_params}")
+        
         try:
-            async with httpx.AsyncClient() as client:
-                # 添加详细的请求日志用于调试
-                logger.info(f"D1 查询请求: URL={self.base_url}/query")
-                logger.debug(f"D1 查询 SQL: {sql}")
-                logger.debug(f"D1 查询参数: {cleaned_params}")
-                
-                response = await client.post(
-                    f"{self.base_url}/query",
-                    headers=self.headers,
-                    json=payload,
-                    timeout=30.0
-                )
-                
-                # 添加详细的响应日志
-                logger.info(f"D1 查询响应状态: {response.status_code}")
-                
-                if not response.is_success:
-                    response_text = response.text
-                    logger.error(f"D1 查询失败 - 状态码: {response.status_code}")
-                    logger.error(f"请求负载: {payload}")
-                    logger.error(f"响应内容: {response_text}")
-                    response.raise_for_status()
-                
-                result = response.json()
-                logger.debug(f"D1 查询成功，返回记录数: {len(result.get('result', []))}")
-                return result
-        except httpx.HTTPStatusError as e:
-            logger.error(f"D1 查询 HTTP 错误: {e.response.status_code} - {e.response.text}")
-            raise
+            return await self._execute_with_retry(
+                f"{self.base_url}/query",
+                payload,
+                "单查询"
+            )
         except Exception as e:
             logger.error(f"D1 查询执行失败: {e}")
             raise
@@ -103,85 +198,67 @@ class D1Service:
         if not self.enabled:
             raise Exception("D1 服务未启用")
         
-        # 清理和验证查询参数
+        if not queries:
+            return {"success": True, "result": [], "meta": {"duration": 0}}
+        
+        # 验证和清理所有查询
         cleaned_queries = []
-        for query in queries:
-            cleaned_params = []
-            if query.get("params"):
-                for param in query["params"]:
-                    if param is None:
-                        cleaned_params.append(None)
-                    elif isinstance(param, (str, int, float, bool)):
-                        cleaned_params.append(param)
-                    else:
-                        cleaned_params.append(str(param))
+        for i, query in enumerate(queries):
+            if not isinstance(query, dict) or "sql" not in query:
+                raise ValueError(f"查询 {i+1} 格式无效：缺少 sql 字段")
+            
+            sql = query["sql"]
+            if not self._validate_sql(sql):
+                raise ValueError(f"查询 {i+1} SQL 语句无效")
+            
+            cleaned_params = self._validate_and_clean_params(query.get("params", []))
             
             cleaned_queries.append({
-                "sql": query["sql"],
+                "sql": sql,
                 "params": cleaned_params
             })
         
+        logger.info(f"准备执行 {len(cleaned_queries)} 个批量查询")
+        for i, query in enumerate(cleaned_queries):
+            logger.debug(f"批量查询 {i+1}: SQL={query['sql'][:100]}..., 参数数量={len(query['params'])}")
+        
         try:
-            async with httpx.AsyncClient() as client:
-                # 添加详细的请求日志用于调试
-                logger.info(f"D1 批量查询请求: URL={self.base_url}/query, 查询数量={len(cleaned_queries)}")
-                for i, query in enumerate(cleaned_queries):
-                    logger.debug(f"查询 {i+1}: SQL={query['sql'][:100]}..., 参数={query['params']}")
-                
-                # 根据 Cloudflare D1 API，批量查询直接发送查询数组
-                response = await client.post(
+            # 首先尝试批量查询
+            try:
+                return await self._execute_with_retry(
                     f"{self.base_url}/query",
-                    headers=self.headers,
-                    json=cleaned_queries,
-                    timeout=30.0
+                    cleaned_queries,
+                    "批量查询"
                 )
+            except Exception as batch_error:
+                logger.warning(f"批量查询失败: {batch_error}")
+                logger.info("回退到顺序执行单个查询")
                 
-                # 添加详细的响应日志
-                logger.info(f"D1 批量查询响应状态: {response.status_code}")
+                # 回退到顺序执行
+                results = []
+                total_duration = 0
                 
-                if not response.is_success:
-                    response_text = response.text
-                    logger.error(f"D1 批量查询失败 - 状态码: {response.status_code}")
-                    logger.error(f"请求负载: {cleaned_queries}")
-                    logger.error(f"响应内容: {response_text}")
-                    
-                    # 如果批量查询失败（可能不支持），尝试顺序执行每个查询
-                    logger.info("批量查询失败，尝试顺序执行单个查询")
-                    results = []
-                    all_success = True
-                    
-                    for i, query in enumerate(cleaned_queries):
-                        try:
-                            result = await self.execute_query(query["sql"], query["params"])
-                            if result.get("success"):
-                                results.append(result)
-                                logger.info(f"查询 {i+1}/{len(cleaned_queries)} 执行成功")
-                            else:
-                                logger.error(f"查询 {i+1}/{len(cleaned_queries)} 返回失败: {result}")
-                                all_success = False
-                                break
-                        except Exception as query_error:
-                            logger.error(f"查询 {i+1}/{len(cleaned_queries)} 执行失败: {query_error}")
-                            all_success = False
-                            break
-                    
-                    if all_success:
-                        # 返回模拟的批量结果格式
-                        return {
-                            "success": True,
-                            "result": [r.get("result", []) for r in results],
-                            "meta": {"duration": sum(r.get("meta", {}).get("duration", 0) for r in results)}
-                        }
-                    else:
-                        # 如果单个查询也失败，抛出原始错误
-                        response.raise_for_status()
+                for i, query in enumerate(cleaned_queries):
+                    try:
+                        result = await self.execute_query(query["sql"], query["params"])
+                        if result.get("success"):
+                            results.append(result.get("result", []))
+                            total_duration += result.get("meta", {}).get("duration", 0)
+                            logger.info(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行成功")
+                        else:
+                            logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 返回失败: {result}")
+                            raise Exception(f"查询 {i+1} 执行失败")
+                    except Exception as query_error:
+                        logger.error(f"顺序查询 {i+1}/{len(cleaned_queries)} 执行失败: {query_error}")
+                        raise Exception(f"查询 {i+1} 执行失败: {query_error}")
                 
-                result = response.json()
-                logger.info(f"D1 批量查询成功")
-                return result
-        except httpx.HTTPStatusError as e:
-            logger.error(f"D1 批量查询 HTTP 错误: {e.response.status_code} - {e.response.text}")
-            raise
+                # 返回模拟的批量结果格式
+                return {
+                    "success": True,
+                    "result": results,
+                    "meta": {"duration": total_duration}
+                }
+                
         except Exception as e:
             logger.error(f"D1 批量查询执行失败: {e}")
             raise
