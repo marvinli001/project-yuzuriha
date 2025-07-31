@@ -5,26 +5,30 @@ An AI chat assistant with persistent memory capabilities, built with modern web 
 ## Architecture
 
 ```
-🌐 Frontend (Next.js PWA) → 🚀 Backend (FastAPI) → 📦 SuperMemory MCP + 🔍 Zilliz Milvus → 🧠 OpenAI GPT-4o
+🌐 Frontend (Next.js PWA) → 🚀 Backend (FastAPI) → 📦 Cloudflare D1 + 🔍 Zilliz Milvus → 🧠 OpenAI GPT-4o
 ```
 
 ## Features
 
 - **PWA Support**: Works offline and can be installed as an app
-- **Persistent Memory**: Remembers conversations using SuperMemory MCP
-- **Semantic Search**: Vector-based memory retrieval with Zilliz Cloud Milvus
+- **Persistent Memory**: Remembers conversations using Cloudflare D1 and Milvus
+- **Dual Storage**: Structured chat history (D1) + semantic search (Milvus)
+- **Cloud Sync**: Chat history synchronized across devices
 - **Modern UI**: ChatGPT-like interface with responsive design
 - **Real-time Chat**: Fast, responsive conversations
 - **Chat History**: Save and resume conversations
+- **File Upload**: Support for images, documents, and audio
+- **Voice Input**: Speech-to-text transcription
 
 ## Tech Stack
 
 - **Frontend**: Next.js 14, TypeScript, Tailwind CSS, PWA
 - **Backend**: FastAPI, Python 3.11
 - **AI Model**: OpenAI GPT-4o
-- **Memory System**: SuperMemory MCP
+- **Chat Storage**: Cloudflare D1 (SQLite-compatible)
 - **Vector Database**: Zilliz Cloud Milvus
 - **Embeddings**: OpenAI text-embedding-3-small
+- **File Storage**: Local uploads with cloud sync
 
 ## Quick Start
 
@@ -32,7 +36,7 @@ An AI chat assistant with persistent memory capabilities, built with modern web 
 
 1. OpenAI API key
 2. Zilliz Cloud account and cluster
-3. SuperMemory MCP instance
+3. Cloudflare account with D1 database (optional, for cloud sync)
 4. Node.js 18+ and Python 3.11+
 
 ### Installation
@@ -72,19 +76,52 @@ docker-compose up --build
 Create a `.env` file in the backend directory:
 
 ```env
+# OpenAI Configuration
 OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_CHAT_MODEL=gpt-4o
+OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+
+# Milvus Configuration
 MILVUS_URI=https://in03-xxx.api.gcp-us-west1.zillizcloud.com
 MILVUS_TOKEN=your_zilliz_token_here
-SUPERMEMORY_API_URL=https://your-supermemory-instance.com
-SUPERMEMORY_API_KEY=your_supermemory_api_key_here
+MILVUS_COLLECTION_NAME=yuzuriha_memories
+
+# Cloudflare D1 Configuration (Optional)
+CLOUDFLARE_ACCOUNT_ID=your_account_id
+CLOUDFLARE_D1_DATABASE_ID=your_database_id
+CLOUDFLARE_API_TOKEN=your_api_token
+CLOUDFLARE_D1_DATABASE_NAME=yuzuriha_chat_db
+
+# API Authentication
+API_SECRET_KEY=your_secret_api_key_here
 ```
+
+For D1 setup instructions, see [docs/cloudflare-d1-setup.md](docs/cloudflare-d1-setup.md).
 
 ## API Endpoints
 
-- `POST /api/chat` - Send a message and get AI response
-- `GET /api/memories` - Retrieve stored memories
-- `DELETE /api/memories` - Clear all memories
+### Chat API
+- `POST /api/chat` - Send a message and get AI response (with dual-write to D1 and Milvus)
+- `POST /chat` - Legacy chat endpoint
+
+### D1 Chat History API
+- `GET /api/chat/sessions` - Get all chat sessions
+- `POST /api/chat/sessions` - Create new chat session
+- `GET /api/chat/sessions/{id}` - Get specific chat session
+- `PUT /api/chat/sessions/{id}` - Update chat session
+- `DELETE /api/chat/sessions/{id}` - Delete chat session
+- `GET /api/chat/sessions/{id}/messages` - Get messages in session
+- `POST /api/chat/sessions/{id}/messages` - Add message to session
+- `GET /api/chat/search` - Search chat messages
+- `GET /api/chat/stats` - Get D1 database statistics
+
+### File and Voice API
+- `POST /api/upload` - Upload files (images, documents, audio)
+- `POST /api/transcribe` - Convert audio to text
+
+### System API
 - `GET /health` - Health check for all services
+- `GET /api/stats` - Get memory and system statistics
 
 ## PWA Features
 
@@ -93,18 +130,33 @@ SUPERMEMORY_API_KEY=your_supermemory_api_key_here
 - **Full Screen**: Immersive chat experience
 - **Responsive Design**: Works on all devices
 
-## Memory System
+## Storage System
 
-The app uses a dual-layer memory system:
+The app uses a sophisticated dual-storage system:
 
-1. **SuperMemory MCP**: Long-term structured memory storage
-2. **Zilliz Milvus**: Vector embeddings for semantic search
+### 1. Cloudflare D1 (Structured Storage)
+- **Purpose**: Chat sessions and message history
+- **Benefits**: Fast queries, relational data, cloud sync
+- **Tables**: `chat_sessions`, `chat_messages`
+- **Features**: Full CRUD operations, search, statistics
+
+### 2. Zilliz Milvus (Vector Storage)
+- **Purpose**: Semantic memory and context retrieval
+- **Benefits**: AI-powered similarity search, contextual responses
+- **Data**: Message embeddings, emotional context, interaction types
+- **Features**: Vector similarity search, memory weight scoring
+
+### Storage Modes
+- **Cloud + Local**: D1 for structured data, localStorage for offline support
+- **Local Only**: localStorage fallback when D1 is unavailable
+- **Dual Write**: All messages stored in both systems simultaneously
 
 This enables the AI to:
-- Remember past conversations
-- Find relevant context automatically
-- Provide personalized responses
-- Learn from interactions
+- Remember complete conversation history
+- Find semantically related past discussions
+- Provide contextually aware responses
+- Sync chat history across devices
+- Work offline with local storage fallback
 
 ## Development
 
@@ -150,10 +202,14 @@ docker-compose up -d
 2. Get your endpoint URI and token
 3. Add to environment variables
 
-### SuperMemory Setup
-1. Deploy SuperMemory MCP instance
-2. Get API endpoint and key
-3. Configure in environment variables
+### Cloudflare D1 Setup
+1. Create a Cloudflare account
+2. Set up a D1 database
+3. Configure API token and database IDs
+4. See detailed instructions: [docs/cloudflare-d1-setup.md](docs/cloudflare-d1-setup.md)
+
+### Authentication
+The API uses Bearer token authentication. Set `API_SECRET_KEY` in your environment variables.
 
 ## Contributing
 
