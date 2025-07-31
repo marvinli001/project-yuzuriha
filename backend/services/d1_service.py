@@ -46,21 +46,54 @@ class D1Service:
         if not self.enabled:
             raise Exception("D1 服务未启用")
         
+        # 确保参数格式正确 - 根据 Cloudflare D1 API 文档
+        cleaned_params = []
+        if params:
+            for param in params:
+                # 确保参数类型正确，D1 支持 string, number, boolean, null
+                if param is None:
+                    cleaned_params.append(None)
+                elif isinstance(param, (str, int, float, bool)):
+                    cleaned_params.append(param)
+                else:
+                    # 对于其他类型，转换为字符串
+                    cleaned_params.append(str(param))
+        
         payload = {
             "sql": sql,
-            "params": params or []
+            "params": cleaned_params
         }
         
         try:
             async with httpx.AsyncClient() as client:
+                # 添加详细的请求日志用于调试
+                logger.info(f"D1 查询请求: URL={self.base_url}/query")
+                logger.debug(f"D1 查询 SQL: {sql}")
+                logger.debug(f"D1 查询参数: {cleaned_params}")
+                
                 response = await client.post(
                     f"{self.base_url}/query",
                     headers=self.headers,
                     json=payload,
                     timeout=30.0
                 )
-                response.raise_for_status()
-                return response.json()
+                
+                # 添加详细的响应日志
+                logger.info(f"D1 查询响应状态: {response.status_code}")
+                
+                if not response.is_success:
+                    response_text = response.text
+                    logger.error(f"D1 查询失败 - 状态码: {response.status_code}")
+                    logger.error(f"请求负载: {payload}")
+                    logger.error(f"响应内容: {response_text}")
+                    response.raise_for_status()
+                
+                result = response.json()
+                logger.debug(f"D1 查询成功，返回记录数: {len(result.get('result', []))}")
+                return result
+        except httpx.HTTPStatusError as e:
+            logger.error(f"D1 查询 HTTP 错误: {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
             logger.error(f"D1 查询执行失败: {e}")
             raise
@@ -70,16 +103,85 @@ class D1Service:
         if not self.enabled:
             raise Exception("D1 服务未启用")
         
+        # 清理和验证查询参数
+        cleaned_queries = []
+        for query in queries:
+            cleaned_params = []
+            if query.get("params"):
+                for param in query["params"]:
+                    if param is None:
+                        cleaned_params.append(None)
+                    elif isinstance(param, (str, int, float, bool)):
+                        cleaned_params.append(param)
+                    else:
+                        cleaned_params.append(str(param))
+            
+            cleaned_queries.append({
+                "sql": query["sql"],
+                "params": cleaned_params
+            })
+        
         try:
             async with httpx.AsyncClient() as client:
+                # 添加详细的请求日志用于调试
+                logger.info(f"D1 批量查询请求: URL={self.base_url}/query, 查询数量={len(cleaned_queries)}")
+                for i, query in enumerate(cleaned_queries):
+                    logger.debug(f"查询 {i+1}: SQL={query['sql'][:100]}..., 参数={query['params']}")
+                
+                # 根据 Cloudflare D1 API，批量查询直接发送查询数组
                 response = await client.post(
                     f"{self.base_url}/query",
                     headers=self.headers,
-                    json=queries,
+                    json=cleaned_queries,
                     timeout=30.0
                 )
-                response.raise_for_status()
-                return response.json()
+                
+                # 添加详细的响应日志
+                logger.info(f"D1 批量查询响应状态: {response.status_code}")
+                
+                if not response.is_success:
+                    response_text = response.text
+                    logger.error(f"D1 批量查询失败 - 状态码: {response.status_code}")
+                    logger.error(f"请求负载: {cleaned_queries}")
+                    logger.error(f"响应内容: {response_text}")
+                    
+                    # 如果批量查询失败（可能不支持），尝试顺序执行每个查询
+                    logger.info("批量查询失败，尝试顺序执行单个查询")
+                    results = []
+                    all_success = True
+                    
+                    for i, query in enumerate(cleaned_queries):
+                        try:
+                            result = await self.execute_query(query["sql"], query["params"])
+                            if result.get("success"):
+                                results.append(result)
+                                logger.info(f"查询 {i+1}/{len(cleaned_queries)} 执行成功")
+                            else:
+                                logger.error(f"查询 {i+1}/{len(cleaned_queries)} 返回失败: {result}")
+                                all_success = False
+                                break
+                        except Exception as query_error:
+                            logger.error(f"查询 {i+1}/{len(cleaned_queries)} 执行失败: {query_error}")
+                            all_success = False
+                            break
+                    
+                    if all_success:
+                        # 返回模拟的批量结果格式
+                        return {
+                            "success": True,
+                            "result": [r.get("result", []) for r in results],
+                            "meta": {"duration": sum(r.get("meta", {}).get("duration", 0) for r in results)}
+                        }
+                    else:
+                        # 如果单个查询也失败，抛出原始错误
+                        response.raise_for_status()
+                
+                result = response.json()
+                logger.info(f"D1 批量查询成功")
+                return result
+        except httpx.HTTPStatusError as e:
+            logger.error(f"D1 批量查询 HTTP 错误: {e.response.status_code} - {e.response.text}")
+            raise
         except Exception as e:
             logger.error(f"D1 批量查询执行失败: {e}")
             raise
