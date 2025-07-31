@@ -40,6 +40,11 @@ class D1Service:
         # 重试配置
         self.max_retries = 3
         self.retry_delay = 1.0  # 初始延迟秒数
+        
+        # 调试模式 - 临时启用详细日志
+        self.debug_mode = os.getenv('D1_DEBUG_MODE', 'false').lower() == 'true'
+        if self.debug_mode:
+            logger.warning("D1 调试模式已启用 - 将记录详细的请求和响应信息")
     
     def is_enabled(self) -> bool:
         """检查 D1 服务是否可用"""
@@ -97,6 +102,10 @@ class D1Service:
                 async with httpx.AsyncClient() as client:
                     logger.info(f"D1 {operation_name} 请求 (尝试 {attempt + 1}/{self.max_retries}): URL={url}")
                     
+                    if self.debug_mode:
+                        logger.info(f"D1 调试 - 请求头: {self.headers}")
+                        logger.info(f"D1 调试 - 请求负载: {json.dumps(payload, indent=2, ensure_ascii=False)}")
+                    
                     response = await client.post(
                         url,
                         headers=self.headers,
@@ -106,14 +115,25 @@ class D1Service:
                     
                     logger.info(f"D1 {operation_name} 响应状态: {response.status_code}")
                     
+                    if self.debug_mode:
+                        logger.info(f"D1 调试 - 响应头: {dict(response.headers)}")
+                    
                     if response.is_success:
                         result = response.json()
+                        if self.debug_mode:
+                            logger.info(f"D1 调试 - 响应内容: {json.dumps(result, indent=2, ensure_ascii=False)}")
                         logger.debug(f"D1 {operation_name} 成功")
                         return result
                     else:
                         response_text = response.text
                         logger.error(f"D1 {operation_name} 失败 - 状态码: {response.status_code}")
-                        logger.error(f"响应内容: {response_text}")
+                        logger.error(f"D1 错误响应内容: {response_text}")
+                        
+                        if self.debug_mode:
+                            logger.error(f"D1 调试 - 完整请求信息:")
+                            logger.error(f"  URL: {url}")
+                            logger.error(f"  Headers: {self.headers}")
+                            logger.error(f"  Payload: {json.dumps(payload, indent=2, ensure_ascii=False)}")
                         
                         # 对于 4xx 错误，不重试
                         if 400 <= response.status_code < 500:
@@ -219,11 +239,14 @@ class D1Service:
             })
         
         logger.info(f"准备执行 {len(cleaned_queries)} 个批量查询")
-        for i, query in enumerate(cleaned_queries):
-            logger.debug(f"批量查询 {i+1}: SQL={query['sql'][:100]}..., 参数数量={len(query['params'])}")
         
+        # 根据 Cloudflare D1 API 文档，REST API 可能不支持真正的批量查询
+        # 我们先尝试批量，失败则回退到顺序执行
         try:
-            # 首先尝试批量查询
+            if self.debug_mode:
+                logger.info("尝试真正的批量查询...")
+            
+            # 尝试发送批量查询（数组格式）
             try:
                 return await self._execute_with_retry(
                     f"{self.base_url}/query",
@@ -231,15 +254,20 @@ class D1Service:
                     "批量查询"
                 )
             except Exception as batch_error:
-                logger.warning(f"批量查询失败: {batch_error}")
-                logger.info("回退到顺序执行单个查询")
+                logger.info(f"批量查询失败，回退到顺序执行: {batch_error}")
                 
-                # 回退到顺序执行
+                # 回退到顺序执行单个查询
+                if self.debug_mode:
+                    logger.info("开始顺序执行单个查询...")
+                
                 results = []
                 total_duration = 0
                 
                 for i, query in enumerate(cleaned_queries):
                     try:
+                        if self.debug_mode:
+                            logger.info(f"执行顺序查询 {i+1}/{len(cleaned_queries)}: {query['sql'][:100]}...")
+                        
                         result = await self.execute_query(query["sql"], query["params"])
                         if result.get("success"):
                             results.append(result.get("result", []))
@@ -253,6 +281,7 @@ class D1Service:
                         raise Exception(f"查询 {i+1} 执行失败: {query_error}")
                 
                 # 返回模拟的批量结果格式
+                logger.info(f"所有 {len(cleaned_queries)} 个查询顺序执行成功")
                 return {
                     "success": True,
                     "result": results,
