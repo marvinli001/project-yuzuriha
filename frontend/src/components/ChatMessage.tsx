@@ -88,102 +88,111 @@ export default function ChatMessage({
   return (
     <div 
       ref={messageRef}
-      className={`group flex gap-4 p-6 ${isUser ? 'bg-transparent' : 'bg-gray-50'} rounded-lg message-item smooth-transition ${
+      className={`w-full ${
         isVisible ? 'message-animate' : 'opacity-0'
-      }`}
+      } smooth-transition`}
       role="article"
       aria-label={`${isUser ? '用户' : 'AI'} 消息`}
     >
-      {/* 头像 */}
-      <div className="flex-shrink-0">
-        <div className={`w-8 h-8 rounded-full flex items-center justify-center smooth-transition ${
-          isUser 
-            ? 'bg-green-600 text-white' 
-            : 'bg-blue-600 text-white'
-        }`}>
-          {isUser ? <User size={16} /> : <Bot size={16} />}
-        </div>
-      </div>
-      
-      {/* 消息内容 */}
-      <div className="flex-1 min-w-0">
-        {/* 消息头部 */}
-        <div className="flex items-center gap-3 mb-2">
-          <span className="font-medium text-sm text-black">
-            {isUser ? 'You' : 'Yuzuriha'}
-          </span>
-          <span className="text-xs text-gray-500">
-            {formatTime(message.timestamp)}
-          </span>
-          
-          {/* 操作按钮 */}
-          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 smooth-transition">
-            {!isLoading && (
-              <button
-                onClick={copyToClipboard}
-                className="p-1 hover:bg-gray-200 rounded transition-colors touch-target focus-visible"
-                title="复制消息"
-                aria-label="复制消息内容"
-              >
-                {copied ? <Check size={14} className="text-green-600" /> : <Copy size={14} className="text-gray-400" />}
-              </button>
-            )}
-            
-            {/* AI 消息的额外操作 */}
-            {!isUser && !isLoading && (
-              <>
-                <button
-                  onClick={handleRegenerate}
-                  className="p-1 hover:bg-gray-200 rounded transition-colors touch-target focus-visible"
-                  title="重新生成"
-                  aria-label="重新生成此回复"
-                >
-                  <RotateCcw size={14} className="text-gray-400" />
-                </button>
-                
-                <button
-                  onClick={() => handleFeedback('positive')}
-                  className={`p-1 hover:bg-gray-200 rounded transition-colors touch-target focus-visible ${
-                    feedback === 'positive' ? 'text-green-600' : 'text-gray-400'
-                  }`}
-                  title="好评"
-                  aria-label="给此回复好评"
-                >
-                  <ThumbsUp size={14} />
-                </button>
-                
-                <button
-                  onClick={() => handleFeedback('negative')}
-                  className={`p-1 hover:bg-gray-200 rounded transition-colors touch-target focus-visible ${
-                    feedback === 'negative' ? 'text-red-600' : 'text-gray-400'
-                  }`}
-                  title="差评"
-                  aria-label="给此回复差评"
-                >
-                  <ThumbsDown size={14} />
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-        
-        {/* 消息文本 */}
-        <div className="prose prose-gray max-w-none">
-          {isLoading ? (
-            <div className="flex items-center gap-2" role="status" aria-label="AI正在生成回复">
-              <div className="flex gap-1 typing-indicator">
-                <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
-                <div className="w-2 h-2 bg-gray-400 rounded-full dot"></div>
+      {/* OpenAI 风格的中置布局 */}
+      <div className={`${isUser ? 'bg-transparent' : 'bg-gray-50'} py-6`}>
+        <div className="max-w-3xl mx-auto px-4">
+          <div className="group flex gap-4">
+            {/* 头像 */}
+            <div className="flex-shrink-0">
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                isUser ? 'bg-green-600' : 'bg-gray-600'
+              }`}>
+                {isUser ? (
+                  <User size={16} className="text-white" />
+                ) : (
+                  <Bot size={16} className="text-white" />
+                )}
               </div>
-              <span className="text-sm text-gray-400">正在生成回复...</span>
             </div>
-          ) : (
-            <div 
-              className="whitespace-pre-wrap break-words text-black leading-relaxed"
-              dangerouslySetInnerHTML={{ __html: formatContent(message.content) }}
-            />
-          )}
+
+            {/* 消息内容 */}
+            <div className="flex-1 min-w-0">
+              {/* 角色标识 */}
+              <div className="flex items-center gap-2 mb-2">
+                <span className="text-sm font-semibold text-gray-900">
+                  {isUser ? '你' : 'Yuzuriha'}
+                </span>
+                <span className="text-xs text-gray-500">
+                  {formatTime(message.timestamp)}
+                </span>
+              </div>
+
+              {/* 消息文本 */}
+              <div className="prose max-w-none text-gray-800 leading-relaxed">
+                {isLoading ? (
+                  <div className="flex items-center space-x-2">
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    </div>
+                    <span className="text-gray-500 text-sm">正在思考...</span>
+                  </div>
+                ) : (
+                  <div 
+                    className="whitespace-pre-wrap break-words"
+                    dangerouslySetInnerHTML={{ __html: formatContent(message.content) }}
+                  />
+                )}
+              </div>
+
+              {/* 操作按钮 */}
+              {!isLoading && !isUser && (
+                <div className="flex items-center gap-2 mt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    onClick={copyToClipboard}
+                    className="p-1.5 rounded-md hover:bg-gray-200 transition-colors"
+                    title="复制消息"
+                  >
+                    {copied ? (
+                      <Check size={14} className="text-green-600" />
+                    ) : (
+                      <Copy size={14} className="text-gray-500" />
+                    )}
+                  </button>
+
+                  {onRegenerate && (
+                    <button
+                      onClick={handleRegenerate}
+                      className="p-1.5 rounded-md hover:bg-gray-200 transition-colors"
+                      title="重新生成"
+                    >
+                      <RotateCcw size={14} className="text-gray-500" />
+                    </button>
+                  )}
+
+                  {onFeedback && (
+                    <>
+                      <button
+                        onClick={() => handleFeedback('positive')}
+                        className={`p-1.5 rounded-md hover:bg-gray-200 transition-colors ${
+                          feedback === 'positive' ? 'bg-green-100 text-green-600' : 'text-gray-500'
+                        }`}
+                        title="好评"
+                      >
+                        <ThumbsUp size={14} />
+                      </button>
+                      <button
+                        onClick={() => handleFeedback('negative')}
+                        className={`p-1.5 rounded-md hover:bg-gray-200 transition-colors ${
+                          feedback === 'negative' ? 'bg-red-100 text-red-600' : 'text-gray-500'
+                        }`}
+                        title="差评"
+                      >
+                        <ThumbsDown size={14} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -4,7 +4,7 @@ import { useChatHistory } from '../hooks/useChatHistory'
 import ChatInput from './ChatInput'
 import MessageBubble from './MessageBubble'
 import Sidebar from './Sidebar'
-import { Menu, Wifi, WifiOff, CheckCircle, XCircle, Clock } from 'lucide-react'
+import { Menu, Wifi, WifiOff, CheckCircle, XCircle, Clock, Bot } from 'lucide-react'
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -261,44 +261,56 @@ export default function ChatPage() {
           </div>
         </header>
 
-        <div 
-          ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto px-4 py-4 space-y-4"
-        >
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-center">
-              <div className="max-w-md">
-                <h2 className="text-2xl font-bold text-gray-900 mb-4">
-                  你好，我是 Yuzuriha
-                </h2>
-                <p className="text-gray-600 mb-8">
-                  云端数据的忠实管家，对话者自己的助手。
-                </p>
+<div 
+  ref={messagesContainerRef}
+  className="flex-1 overflow-y-auto"
+>
+  {messages.length === 0 ? (
+    <div className="flex flex-col items-center justify-center h-full text-center px-4">
+      <div className="max-w-md">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+          你好，我是 Yuzuriha
+        </h2>
+        <p className="text-gray-600 mb-8">
+          云端数据的忠实管家，对话者自己的助手。
+        </p>
+      </div>
+    </div>
+  ) : (
+    <>
+      {messages.map((message) => (
+        <MessageBubble key={message.id} message={message} />
+      ))}
+      {isLoading && (
+        <div className="bg-gray-50 py-6">
+          <div className="max-w-3xl mx-auto px-4">
+            <div className="flex gap-4">
+              <div className="flex-shrink-0">
+                <div className="w-8 h-8 rounded-full flex items-center justify-center bg-gray-600">
+                  <Bot size={16} className="text-white" />
+                </div>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-sm font-semibold text-gray-900">Yuzuriha</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="flex space-x-1">
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
+                  <span className="text-gray-500 text-sm">正在思考...</span>
+                </div>
               </div>
             </div>
-          ) : (
-            <>
-              {messages.map((message) => (
-                <MessageBubble key={message.id} message={message} />
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-white rounded-lg px-4 py-3 shadow-sm border border-gray-200">
-                    <div className="flex items-center space-x-2">
-                      <div className="flex space-x-1">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                      </div>
-                      <span className="text-sm text-gray-500">AI正在回应中...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-          <div ref={messagesEndRef} />
+          </div>
         </div>
+      )}
+    </>
+  )}
+  <div ref={messagesEndRef} />
+</div>
 
         <div className="border-t border-gray-200 bg-white p-4">
           <ChatInput 
