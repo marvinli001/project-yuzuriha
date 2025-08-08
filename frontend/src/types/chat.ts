@@ -5,6 +5,20 @@ export interface Message {
   timestamp: string
 }
 
+export interface UploadedFile {
+  id: string
+  filename: string
+  type: 'image' | 'document' | 'audio' | 'other'
+  size: number
+  path: string
+  url?: string
+  // 添加 File 对象的其他属性以兼容
+  lastModified?: number
+  name?: string
+  webkitRelativePath?: string
+  arrayBuffer?: ArrayBuffer
+}
+
 export interface ChatHistory {
   id: string
   title: string
@@ -17,6 +31,7 @@ export interface ChatHistory {
 export interface ChatRequest {
   message: string
   history: Message[]
+  files?: UploadedFile[]
 }
 
 export interface ChatResponse {
@@ -38,4 +53,11 @@ export interface HealthStatus {
     milvus: boolean
     supermemory: boolean
   }
+}
+
+// 添加 ChatInput 组件的 Props 接口
+export interface ChatInputProps {
+  onSendMessage: (content: string, files?: UploadedFile[]) => Promise<void>
+  disabled?: boolean
+  hasMessages?: boolean
 }
