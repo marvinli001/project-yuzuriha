@@ -433,38 +433,45 @@ class D1Service:
             logger.error(f"删除聊天会话失败: {e}")
             raise
     
-    async def add_chat_message(self, session_id: str, role: str, content: str) -> str:
+    async def add_chat_message(self, session_id: Optional[str], role: str, content: str) -> str:
         """添加聊天消息"""
+
         message_id = str(uuid.uuid4())
         timestamp = int(time.time() * 1000)
-        
+
         try:
-            # 首先确保会话存在，如果不存在则创建
-            session = await self.get_chat_session(session_id)
+            # 统一计算“有效会话 ID”
+            effective_session_id = session_id
+
+            # 若未传或找不到会话，则创建新会话并改用新会话 ID
+            session = None
+            if effective_session_id:
+                session = await self.get_chat_session(effective_session_id)
+
             if not session:
-                logger.info(f"会话 {session_id} 不存在，创建新会话")
-                await self.create_chat_session("新对话")
-            
-            # 添加消息
+                logger.info(f"会话 {session_id} 不存在或未提供，创建新会话")
+                effective_session_id = await self.create_chat_session("新对话")
+
+            # 添加消息（注意这里使用 effective_session_id）
             sql_message = """
             INSERT INTO chat_messages (id, session_id, role, content, timestamp)
             VALUES (?, ?, ?, ?, ?)
             """
-            params_message = [message_id, session_id, role, content, timestamp]
+            params_message = [message_id, effective_session_id, role, content, timestamp]
             await self.execute_query(sql_message, params_message)
-            
+
             # 更新会话的 updated_at
             sql_session = """
             UPDATE chat_sessions
             SET updated_at = ?
             WHERE id = ?
             """
-            params_session = [timestamp, session_id]
+            params_session = [timestamp, effective_session_id]
             await self.execute_query(sql_session, params_session)
-            
-            logger.info(f"添加聊天消息成功: {message_id}")
+
+            logger.info(f"添加聊天消息成功: {message_id} -> session {effective_session_id}")
             return message_id
-            
+
         except Exception as e:
             logger.error(f"添加聊天消息失败: {e}")
             raise

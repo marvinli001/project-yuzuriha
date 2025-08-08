@@ -18,6 +18,7 @@ from services.memory_service import MemoryService
 from services.emotion_service import EmotionAnalyzer, EventClassifier
 from services.time_service import TimeService
 from services.d1_service import D1Service
+from app.routes.chat_sessions import router as chat_sessions_router
 
 # 新增：导入鉴权模块
 from auth.api_auth import require_api_key
@@ -159,6 +160,9 @@ app = FastAPI(
     version="2.3.0",
     lifespan=lifespan
 )
+
+# 新增：挂载 D1 Chat 路由（chat_sessions.py）
+app.include_router(chat_sessions_router)
 
 # 配置 CORS
 app.add_middleware(
