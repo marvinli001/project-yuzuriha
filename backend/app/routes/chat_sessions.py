@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/chat",
     tags=["D1 Chat"],
-    dependencies=[Depends(require_api_key())],
+    dependencies=[Depends(require_api_key)],  # 修改这里：移除括号
 )
 
 d1_service = D1Service()
@@ -113,7 +113,7 @@ async def delete_chat_session(session_id: str):
     try:
         ok = await d1_service.delete_chat_session(session_id)
         if not ok:
-            # 如果要区分“会话不存在”，也可以先查一次再删
+            # 如果要区分"会话不存在"，也可以先查一次再删
             raise HTTPException(status_code=400, detail="删除聊天会话失败")
         return ApiResponse(success=True, message="删除成功", data={"id": session_id})
     except HTTPException:

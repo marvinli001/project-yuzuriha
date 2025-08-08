@@ -230,30 +230,42 @@ export function useChatHistory(options: UseChatHistoryOptions = {}): UseChatHist
     }
   }, [isCloudEnabled, chatHistories, saveToLocal])
 
-  // 加载会话
-  const loadSession = useCallback(async (sessionId: string): Promise<ChatHistory | null> => {
-    try {
-      if (isCloudEnabled) {
-        const sessionResponse = await chatApi.getSession(sessionId)
-        const messagesResponse = await chatApi.getMessages(sessionId)
-        
-        const session = {
-          ...convertFromD1Session(sessionResponse.session),
-          messages: messagesResponse.messages.map(convertFromD1Message),
-        }
-        
-        setCurrentSession(session)
-        return session
-      } else {
-        const session = chatHistories.find(h => h.id === sessionId) || null
-        setCurrentSession(session)
-        return session
+// 在 loadSession 函数中添加防重复加载逻辑
+const loadSession = useCallback(async (sessionId: string): Promise<ChatHistory | null> => {
+  // 防止重复加载同一个会话
+  if (currentSession?.id === sessionId) {
+    return currentSession
+  }
+
+  try {
+    if (isCloudEnabled) {
+      const [sessionResponse, messagesResponse] = await Promise.all([
+        chatApi.getSession(sessionId),
+        chatApi.getMessages(sessionId, 100)
+      ])
+      
+      const session: ChatHistory = {
+        id: sessionResponse.session.id,
+        title: sessionResponse.session.title,
+        messages: messagesResponse.messages.map(convertFromD1Message),
+        createdAt: new Date(sessionResponse.session.created_at).toISOString(),
+        updatedAt: new Date(sessionResponse.session.updated_at).toISOString(),
+        timestamp: new Date(sessionResponse.session.created_at).toISOString(),
       }
-    } catch (error) {
-      console.error('加载会话失败:', error)
-      return null
+      
+      setCurrentSession(session)
+      return session
+    } else {
+      const session = chatHistories.find(h => h.id === sessionId) || null
+      setCurrentSession(session)
+      return session
     }
-  }, [isCloudEnabled, chatHistories])
+  } catch (error) {
+    console.error('加载会话失败:', error)
+    setError(error instanceof Error ? error.message : '加载失败')
+    return null
+  }
+}, [isCloudEnabled, currentSession?.id, chatHistories]) // 添加 currentSession?.id 依赖
 
   // 更新会话
   const updateSession = useCallback(async (sessionId: string, updates: Partial<ChatHistory>) => {
@@ -284,28 +296,30 @@ export function useChatHistory(options: UseChatHistoryOptions = {}): UseChatHist
     }
   }, [isCloudEnabled, chatHistories, saveToLocal])
 
-  // 删除会话
-  const deleteSession = useCallback(async (sessionId: string) => {
-    try {
-      if (isCloudEnabled) {
-        await chatApi.deleteSession(sessionId)
-      }
-      
-      setChatHistories(prev => prev.filter(history => history.id !== sessionId))
-      
-      if (currentSession?.id === sessionId) {
-        setCurrentSession(null)
-      }
-      
-      if (!isCloudEnabled) {
-        const updatedHistories = chatHistories.filter(history => history.id !== sessionId)
-        saveToLocal(updatedHistories)
-      }
-    } catch (error) {
-      console.error('删除会话失败:', error)
-      throw error
+// 修改 deleteSession 函数，添加状态清理
+const deleteSession = useCallback(async (sessionId: string) => {
+  try {
+    if (isCloudEnabled) {
+      await chatApi.deleteSession(sessionId)
     }
-  }, [isCloudEnabled, currentSession, chatHistories, saveToLocal])
+    
+    // 更新本地状态
+    setChatHistories(prev => prev.filter(history => history.id !== sessionId))
+    
+    // 如果删除的是当前会话，清除当前会话状态
+    if (currentSession?.id === sessionId) {
+      setCurrentSession(null)
+    }
+    
+    if (!isCloudEnabled) {
+      const updatedHistories = chatHistories.filter(history => history.id !== sessionId)
+      saveToLocal(updatedHistories)
+    }
+  } catch (error) {
+    console.error('删除会话失败:', error)
+    throw error
+  }
+}, [isCloudEnabled, currentSession?.id, chatHistories, saveToLocal]) // 修改依赖项
 
   // 添加消息
   const addMessage = useCallback(async (sessionId: string, message: Message) => {
